@@ -381,6 +381,12 @@ function exitToComposer() {
 
 const typeStyle = { color: 'var(--ui-text-secondary)', fontFamily: 'var(--dt-font-sans, inherit)' }
 const monoStyle = { color: 'var(--ui-text-quaternary)', fontFamily: 'var(--dt-font-mono, monospace)' }
+// Settled rows recede so the live question can be plain primary text without a size jump.
+const PAST_OPACITY = 0.55
+// Neutral text ramp, not the (accent-tinted) stroke ramp: the answer line is a quiet rule that
+// merely brightens on focus — never a colored highlight.
+const INPUT_LINE = 'var(--ui-text-quaternary)'
+const INPUT_LINE_FOCUS = 'var(--ui-text-tertiary)'
 
 function HintRow({ done = false }) {
   return jsxs('div', {
@@ -426,6 +432,7 @@ function Ladder({ ladder }) {
           gridTemplateColumns: '20px minmax(0, 1fr) minmax(0, 0.8fr)',
           lineHeight: '16px',
           minWidth: 0,
+          opacity: PAST_OPACITY,
           padding: 0,
           textAlign: 'left',
           width: '100%'
@@ -489,9 +496,9 @@ function ActiveQuestion({ state }) {
         'data-grill': 'input',
         'data-grill-answer-input': true,
         autoFocus: true,
-        onBlur: event => { event.currentTarget.style.borderColor = 'var(--ui-stroke-secondary)' },
+        onBlur: event => { event.currentTarget.style.borderColor = INPUT_LINE },
         onChange: event => update({ type: 'SET_ANSWER', answer: event.currentTarget.value }),
-        onFocus: event => { event.currentTarget.style.borderColor = 'var(--ui-accent)' },
+        onFocus: event => { event.currentTarget.style.borderColor = INPUT_LINE_FOCUS },
         onKeyDown: event => {
           if (event.isComposing) return
           if (event.key === 'Tab' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
@@ -517,7 +524,7 @@ function ActiveQuestion({ state }) {
           ...typeStyle,
           background: 'transparent',
           border: 0,
-          borderBottom: '1px solid var(--ui-stroke-secondary)',
+          borderBottom: `1px solid ${INPUT_LINE}`,
           borderRadius: 0,
           boxSizing: 'border-box',
           fontSize: '13px',
@@ -661,9 +668,9 @@ function GrillLadder() {
       jsxs('div', {
         'data-grill': 'header',
         'data-grill-intent-row': true,
-        style: { alignItems: 'baseline', display: 'grid', gridTemplateColumns: '64px minmax(0, 1fr)', lineHeight: '16px', minWidth: 0 },
+        style: { alignItems: 'baseline', display: 'grid', gridTemplateColumns: '20px minmax(0, 1fr)', lineHeight: '16px', minWidth: 0, opacity: PAST_OPACITY },
         children: [
-          jsx('span', { 'data-grill-intent-label': true, style: { ...monoStyle, fontSize: '12px', letterSpacing: '0.12em' }, children: 'INTENT' }),
+          jsx('span', { 'data-grill-intent-label': true, 'aria-hidden': true, style: { ...monoStyle, fontSize: '12px' }, children: '—' }),
           jsx('span', { 'data-grill-intent-text': true, style: { ...typeStyle, fontSize: '12px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: state.intent, children: state.intent })
         ]
       }),
