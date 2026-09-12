@@ -383,10 +383,9 @@ const typeStyle = { color: 'var(--ui-text-secondary)', fontFamily: 'var(--dt-fon
 const monoStyle = { color: 'var(--ui-text-quaternary)', fontFamily: 'var(--dt-font-mono, monospace)' }
 // Settled rows recede so the live question can be plain primary text without a size jump.
 const PAST_OPACITY = 0.55
-// Neutral text ramp, not the (accent-tinted) stroke ramp: the answer line is a quiet rule that
-// merely brightens on focus — never a colored highlight.
-const INPUT_LINE = 'var(--ui-text-quaternary)'
-const INPUT_LINE_FOCUS = 'var(--ui-text-tertiary)'
+// Answer line: quiet stroke at rest, accent on focus (approved look).
+const INPUT_LINE = 'var(--ui-stroke-secondary)'
+const INPUT_LINE_FOCUS = 'var(--ui-accent)'
 
 function HintRow({ done = false }) {
   return jsxs('div', {
