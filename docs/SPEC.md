@@ -8,8 +8,11 @@ launches. Portable: one folder, no core patches. Supersedes the in-core fork in
 ## Decisions (settled with An, 2026-09-12)
 - Engine MAY declare the ladder done ("nothing critical left"); Enter still launches, Tab forces one more question.
 - Brief is SYNTHESIZED by the fast model at Enter (Goal/Success/Scope/Decisions/Verification), previewed before launch; local template is the fallback only.
+- **Enter never auto-sends.** From the preview, Enter PLACES the brief into the composer (ladder closes, caret at end); the user reviews and presses Enter themselves. Lower risk of shipping a prompt with something unwanted.
+- While the ladder is open the composer is cleared (the INTENT header carries the draft); a full exit restores the draft.
+- Recommended answer lives only in the ghost placeholder (Tab/Enter on empty accepts it); chips exclude it. No "Write brief"/"Launch" buttons — the kbd hints are the affordance.
 - Delivery = plugin package (`~/.hermes/plugins/grill-tab`), desktop half `desktop/plugin.js`, backend `dashboard/plugin_api.py`.
-- `auxiliary.grill` pinned to a fast model (OpenRouter `google/gemini-3.7-flash`, no reasoning) in both `~/.hermes/config.yaml` and `~/.hermes-dev/config.yaml`.
+- `auxiliary.grill` pinned to `openrouter / openai/gpt-5-mini / reasoning_effort: minimal` (measured 2.4–3.0 s per rung with clearly better questions than flash-lite at ~1.2 s; Gemini 3.7 Flash cannot disable reasoning → 400).
 - Probe categories for general agentic work: goal & success signal · deliverable shape / where output lands · scope, non-goals, constraints (time, budget, access) · verification / definition of done. Dev "architectural fork" allowed only when the intent is clearly code.
 
 ## Why the old engine produced noise (fix all four)
