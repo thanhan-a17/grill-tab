@@ -1,0 +1,3 @@
+name: grill-tab
+description: Interrogate a draft intent and synthesize an execution brief.
+version: 0.1.0
