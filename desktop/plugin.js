@@ -1,8 +1,8 @@
 import {
   atom,
-  Button,
-  Codicon,
   COMPOSER_AREAS,
+  CopyButton,
+  GlyphSpinner,
   host,
   Kbd,
   KbdGroup,
@@ -12,6 +12,7 @@ import {
   useValue
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
+import { useEffect, useRef } from 'react'
 
 const ID = 'grill-tab'
 
@@ -220,29 +221,6 @@ const composerAdapter = {
     return true
   },
 
-  async submit() {
-    const input = this.getInput()
-    if (!input) return false
-    // index.tsx:1105 binds editor keydown; :1268-1276 owns form submit. Synthetic events cannot be trusted,
-    // but this carries the same Enter fields before the documented button fallback below.
-    input.dispatchEvent(new KeyboardEvent('keydown', {
-      bubbles: true,
-      cancelable: true,
-      code: 'Enter',
-      key: 'Enter',
-      keyCode: 13,
-      which: 13
-    }))
-    await new Promise(resolve => setTimeout(resolve, 150))
-    if (!this.readDraft().trim()) return true
-    const root = this.getRoot()
-    // controls.tsx:144-149 renders the submit button with type="submit" and a localized aria-label.
-    const sendButton = root?.querySelector('[data-slot="composer-surface"] button[type="submit"][aria-label]')
-    if (!(sendButton instanceof HTMLElement) || sendButton.hasAttribute('disabled')) return false
-    sendButton.click()
-    return true
-  },
-
   isPopoverOpen() {
     const root = this.getRoot()
     // trigger-popover.tsx:154-162 marks an open completion drawer as listbox with this slot/state pair.
@@ -324,14 +302,18 @@ function startFromComposer() {
   const state = $grill.get()
   const intent = composerAdapter.readDraft().trim()
   if (state.status !== 'idle' || !intent) return
+  if (!composerAdapter.writeDraft('')) {
+    host.notify({ kind: 'error', message: 'Could not clear the composer for grilling.' })
+    return
+  }
   update({ type: 'START', intent })
   void askNext()
 }
 
-function commitAnswer() {
+function commitAnswer(answer = $grill.get().answer) {
   const state = $grill.get()
   if (state.status !== 'active') return
-  update({ type: 'COMMIT_ANSWER', answer: state.answer })
+  update({ type: 'COMMIT_ANSWER', answer })
   void askNext()
 }
 
@@ -373,12 +355,16 @@ async function launchBrief() {
     host.notify({ kind: 'error', message: 'Could not write the brief into the composer.' })
     return
   }
-  const submitted = await composerAdapter.submit()
-  if (!submitted) {
-    host.notify({ kind: 'error', message: 'Could not submit the brief. It remains in the composer.' })
+  requestSerial += 1
+  update({ type: 'RESET' })
+}
+
+function restoreIntentAndReset(intent = $grill.get().intent) {
+  requestSerial += 1
+  if (intent && !composerAdapter.writeDraft(intent)) {
+    host.notify({ kind: 'error', message: 'Could not restore the intent into the composer.' })
     return
   }
-  requestSerial += 1
   update({ type: 'RESET' })
 }
 
@@ -393,12 +379,14 @@ function exitToComposer() {
   }
 }
 
-const typeStyle = { color: 'var(--ui-text-secondary)', fontFamily: 'var(--dt-font-sans, sans-serif)' }
+const typeStyle = { color: 'var(--ui-text-secondary)', fontFamily: 'var(--dt-font-sans, inherit)' }
 const monoStyle = { color: 'var(--ui-text-quaternary)', fontFamily: 'var(--dt-font-mono, monospace)' }
 
 function HintRow({ done = false }) {
   return jsxs('div', {
-    style: { ...monoStyle, alignItems: 'center', display: 'flex', flexWrap: 'wrap', fontSize: '11px', gap: '6px', marginTop: '8px' },
+    'data-grill': 'hints',
+    'data-grill-hints': true,
+    style: { ...typeStyle, alignItems: 'center', display: 'flex', flexWrap: 'wrap', fontSize: '11px', gap: '6px', lineHeight: '16px' },
     children: done
       ? [
           jsx(KbdGroup, { keys: ['Enter'], size: 'sm', variant: 'ghost' }),
@@ -420,31 +408,37 @@ function HintRow({ done = false }) {
 function Ladder({ ladder }) {
   if (!ladder.length) return null
   return jsx('div', {
-    style: { display: 'grid', gap: '8px', marginTop: '16px' },
+    'data-grill-ladder': true,
+    style: { display: 'grid', marginTop: '16px', rowGap: '8px' },
     children: ladder.map((rung, index) =>
       jsxs('button', {
-        className: 'hover:underline',
+        'data-grill': 'rung',
+        'data-grill-rung': true,
         key: `${rung.question}-${index}`,
         onClick: () => update({ type: 'REOPEN_RUNG', index }),
         style: {
           ...typeStyle,
           alignItems: 'baseline',
+          background: 'transparent',
           border: 0,
           cursor: 'pointer',
           display: 'grid',
           gridTemplateColumns: '20px minmax(0, 1fr) minmax(0, 0.8fr)',
+          lineHeight: '16px',
           minWidth: 0,
           padding: 0,
-          textAlign: 'left'
+          textAlign: 'left',
+          width: '100%'
         },
         type: 'button',
         children: [
-          jsx('span', { style: { ...monoStyle, fontSize: '12px' }, children: String(index + 1).padStart(2, '0') }),
-          jsx('span', { style: { fontSize: '12px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: rung.question, children: rung.question }),
+          jsx('span', { 'data-grill-rung-number': true, style: { ...monoStyle, fontSize: '12px' }, children: String(index + 1).padStart(2, '0') }),
+          jsx('span', { 'data-grill-rung-text': true, style: { fontSize: '12px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: rung.question, children: rung.question }),
           jsx(Tip, {
             label: rung.answer,
             children: jsx('span', {
-              style: { color: 'var(--ui-text-quaternary)', fontSize: '12px', minWidth: 0, overflow: 'hidden', textAlign: 'right', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+              'data-grill-rung-answer': true,
+              style: { color: 'var(--ui-text-primary, inherit)', fontSize: '12px', minWidth: 0, overflow: 'hidden', textAlign: 'right', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
               children: `${rung.answer}${rung.settledFromRecommendation ? ' (recommended)' : ''}`
             })
           })
@@ -454,8 +448,21 @@ function Ladder({ ladder }) {
   })
 }
 
+function CurrentQuestion({ number, text }) {
+  return jsxs('div', {
+    'data-grill': 'question',
+    'data-grill-current-question': true,
+    style: { alignItems: 'baseline', display: 'grid', gridTemplateColumns: '20px minmax(0, 1fr)', lineHeight: '20px' },
+    children: [
+      jsx('span', { 'data-grill-current-number': true, style: { ...monoStyle, fontSize: '12px' }, children: String(number).padStart(2, '0') }),
+      jsx('span', { 'data-grill-current-text': true, style: { color: 'var(--ui-text-primary, inherit)', fontFamily: 'var(--dt-font-sans, inherit)', fontSize: '14px', fontWeight: 500 }, children: text })
+    ]
+  })
+}
+
 function ActiveQuestion({ state }) {
   const current = state.current
+  const nextNumber = state.ladder.length + 1
   if (!current) {
     return jsx('button', {
       autoFocus: true,
@@ -466,17 +473,21 @@ function ActiveQuestion({ state }) {
         event.stopPropagation()
         exitToComposer()
       },
-      style: { ...typeStyle, border: 0, cursor: 'pointer', fontSize: '14px', fontWeight: 500, marginTop: '16px', padding: 0, textAlign: 'left' },
+      style: { background: 'transparent', border: 0, cursor: 'pointer', marginTop: '16px', padding: 0, textAlign: 'left', width: '100%' },
       type: 'button',
-      children: 'Question dismissed. Press Esc again to restore the intent.'
+      children: jsx(CurrentQuestion, { number: nextNumber, text: 'Question dismissed. Press Esc again to restore the intent.' })
     })
   }
+  const recommendation = String(current.recommended || '').trim().toLocaleLowerCase()
+  const options = current.options.filter(option => String(option).trim().toLocaleLowerCase() !== recommendation)
   return jsxs('div', {
     style: { marginTop: '16px' },
     children: [
-      jsx('div', { style: { ...typeStyle, fontSize: '14px', fontWeight: 500 }, children: current.question }),
+      jsx(CurrentQuestion, { number: nextNumber, text: current.question }),
       jsx('input', {
         'aria-label': 'Grill answer',
+        'data-grill': 'input',
+        'data-grill-answer-input': true,
         autoFocus: true,
         onBlur: event => { event.currentTarget.style.borderColor = 'var(--ui-stroke-secondary)' },
         onChange: event => update({ type: 'SET_ANSWER', answer: event.currentTarget.value }),
@@ -497,10 +508,11 @@ function ActiveQuestion({ state }) {
             exitToComposer()
           } else if (event.key === 'Backspace' && !state.answer) {
             event.preventDefault()
-            update({ type: 'BACKSPACE_EMPTY' })
+            if (state.ladder.length) update({ type: 'BACKSPACE_EMPTY' })
+            else restoreIntentAndReset()
           }
         },
-        placeholder: current.recommended ? `↵ recommended: ${current.recommended}` : 'Answer this decision',
+        placeholder: current.recommended ? `recommended: ${current.recommended}` : 'Answer this decision',
         style: {
           ...typeStyle,
           background: 'transparent',
@@ -508,7 +520,8 @@ function ActiveQuestion({ state }) {
           borderBottom: '1px solid var(--ui-stroke-secondary)',
           borderRadius: 0,
           boxSizing: 'border-box',
-          fontSize: '14px',
+          fontSize: '13px',
+          lineHeight: '20px',
           marginTop: '8px',
           outline: 'none',
           padding: '6px 0',
@@ -516,31 +529,73 @@ function ActiveQuestion({ state }) {
         },
         value: state.answer
       }),
-      current.options.length
+      options.length
         ? jsx('div', {
-            style: { ...typeStyle, display: 'flex', flexWrap: 'wrap', fontSize: '12px', gap: '8px', marginTop: '8px' },
-            children: current.options.map(option => jsx('button', {
-              className: 'hover:underline',
-              key: option,
-              onClick: () => update({ type: 'SET_ANSWER', answer: option }),
-              style: { ...typeStyle, border: 0, cursor: 'pointer', padding: 0 },
+            'data-grill': 'chips',
+            'data-grill-chips': true,
+            style: { ...typeStyle, columnGap: '16px', display: 'flex', flexWrap: 'wrap', fontSize: '12px', marginTop: '8px', rowGap: '6px' },
+            children: options.map((option, index) => jsx('button', {
+              'data-grill-chip': true,
+              key: `${option}-${index}`,
+              onClick: () => commitAnswer(option),
+              style: { ...typeStyle, background: 'transparent', border: '1px solid var(--ui-stroke-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', lineHeight: '16px', padding: '2px 8px' },
+              onMouseEnter: event => { event.currentTarget.style.borderColor = 'var(--ui-accent)'; event.currentTarget.style.color = 'var(--ui-text-primary, inherit)' },
+              onMouseLeave: event => { event.currentTarget.style.borderColor = 'var(--ui-stroke-secondary)'; event.currentTarget.style.color = 'var(--ui-text-secondary)' },
               type: 'button',
               children: option
             }))
           })
         : null,
-      jsx(HintRow, {}),
-      jsx('div', {
-        style: { display: 'flex', gap: '8px', marginTop: '12px' },
-        children: jsx(Button, { onClick: () => void writeBrief(), size: 'sm', type: 'button', variant: 'ghost', children: 'Write brief' })
-      })
+      jsx('div', { style: { marginTop: options.length ? '12px' : '12px' }, children: jsx(HintRow, {}) })
     ]
   })
 }
 
-function Preview({ state }) {
+function DoneRow({ state }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    ref.current?.focus({ preventScroll: true })
+  }, [])
   return jsxs('div', {
-    autoFocus: true,
+    'data-grill': 'done',
+    style: { marginTop: '16px' },
+    children: [
+      jsx(CurrentQuestion, { number: state.ladder.length + 1, text: 'Nothing critical left.' }),
+      jsx('button', {
+        ref,
+                    onKeyDown: event => {
+                      if (event.key === 'Tab' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        forceOneMore()
+                      } else if (event.key === 'Enter') {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        void writeBrief()
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        restoreIntentAndReset()
+                      }
+                    },
+                    style: { background: 'transparent', border: 0, cursor: 'pointer', marginTop: '12px', padding: 0, textAlign: 'left' },
+                    type: 'button',
+                    children: jsx(HintRow, { done: true })
+                  })
+                ]
+              })
+}
+
+function Preview({ state }) {
+  // `autoFocus` is unreliable on a div — the composer keeps focus and its own
+  // Enter handler submits the (empty) draft. Take focus explicitly on mount.
+  const ref = useRef(null)
+  useEffect(() => {
+    ref.current?.focus({ preventScroll: true })
+  }, [])
+  return jsxs('div', {
+    ref,
+    'data-grill': 'preview',
     onKeyDown: event => {
       if (event.key === 'Enter' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
         event.preventDefault()
@@ -556,25 +611,31 @@ function Preview({ state }) {
     tabIndex: -1,
     children: [
       jsx('div', {
-        style: { ...monoStyle, fontSize: '11px', maxHeight: '40vh', overflow: 'auto', whiteSpace: 'pre-wrap' },
+        'data-grill-preview-text': true,
+        style: { color: 'var(--ui-text-primary, inherit)', fontFamily: 'var(--dt-font-sans, inherit)', fontSize: '12px', lineHeight: '18px', maxHeight: '40vh', overflow: 'auto', whiteSpace: 'pre-wrap' },
         children: state.brief
       }),
-      jsx('div', {
-        style: { display: 'flex', gap: '8px', marginTop: '12px' },
+      jsxs('div', {
+        'data-grill-preview-hints': true,
+        style: { ...typeStyle, alignItems: 'center', display: 'flex', fontSize: '11px', gap: '6px', marginTop: '12px' },
         children: [
-          jsx(Button, {
-            onClick: async () => {
-              const copied = await pluginContext?.os?.writeClipboard(state.brief)
-              host.notify({ kind: copied ? 'info' : 'error', message: copied ? 'Brief copied.' : 'Could not copy the brief.' })
-            },
-            size: 'sm',
-            type: 'button',
-            variant: 'ghost',
-            children: jsxs('span', { style: { alignItems: 'center', display: 'inline-flex', gap: '4px' }, children: [jsx(Codicon, { name: 'copy', size: '0.875rem' }), 'Copy'] })
-          }),
-          jsx(Button, { onClick: () => void launchBrief(), size: 'sm', type: 'button', variant: 'ghost', children: 'Launch' })
+          jsx(Kbd, { children: 'Enter', size: 'sm', variant: 'ghost' }),
+          jsx('span', { children: 'place in composer ·' }),
+          jsx(Kbd, { children: 'Esc', size: 'sm', variant: 'ghost' }),
+          jsx('span', { children: 'back' }),
+          jsx(CopyButton, { appearance: 'icon', buttonSize: 'icon', className: 'size-6', label: 'Copy brief', text: state.brief })
         ]
       })
+    ]
+  })
+}
+
+function LoadingRow({ children }) {
+  return jsxs('div', {
+    style: { alignItems: 'center', display: 'grid', gridTemplateColumns: '20px minmax(0, 1fr)', marginTop: '16px' },
+    children: [
+      jsx('span', { style: { ...monoStyle, fontSize: '10px', lineHeight: '16px' }, children: jsx(GlyphSpinner, { ariaLabel: 'Loading' }) }),
+      jsx('span', { 'data-grill-loading-text': true, style: { ...typeStyle, fontSize: '14px', fontWeight: 500, lineHeight: '20px' }, children })
     ]
   })
 }
@@ -584,50 +645,26 @@ function GrillLadder() {
   if (state.status === 'idle') return null
   const body =
     state.status === 'asking'
-      ? jsx('div', { style: { ...typeStyle, fontSize: '14px', fontWeight: 500, marginTop: '16px' }, children: 'Finding the next decision…' })
+      ? jsx(LoadingRow, { children: 'Finding the next decision…' })
       : state.status === 'briefing'
-        ? jsx('div', { style: { ...typeStyle, fontSize: '14px', fontWeight: 500, marginTop: '16px' }, children: 'Writing the brief…' })
+        ? jsx(LoadingRow, { children: 'Writing the brief…' })
         : state.status === 'active'
           ? jsx(ActiveQuestion, { state })
           : state.status === 'done'
-            ? jsxs('div', {
-                style: { marginTop: '16px' },
-                children: [
-                  jsx('div', { style: { ...typeStyle, fontSize: '14px', fontWeight: 500 }, children: 'Nothing critical left.' }),
-                  jsx('button', {
-                    autoFocus: true,
-                    onClick: () => void writeBrief(),
-                    onKeyDown: event => {
-                      if (event.key === 'Tab' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        forceOneMore()
-                      } else if (event.key === 'Enter') {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        void writeBrief()
-                      } else if (event.key === 'Escape') {
-                        event.preventDefault()
-                        exitToComposer()
-                      }
-                    },
-                    style: { border: 0, cursor: 'pointer', padding: 0, textAlign: 'left' },
-                    type: 'button',
-                    children: jsx(HintRow, { done: true })
-                  }),
-                  jsx('div', { style: { display: 'flex', gap: '8px', marginTop: '12px' }, children: jsx(Button, { onClick: forceOneMore, size: 'sm', type: 'button', variant: 'ghost', children: 'One more question' }) })
-                ]
-              })
+            ? jsx(DoneRow, { state })
             : jsx(Preview, { state })
 
   return jsxs('div', {
-    style: { padding: '0 12px 12px' },
+    'data-grill-strip': true,
+    style: { padding: '0 0 8px' },
     children: [
       jsxs('div', {
-        style: { alignItems: 'baseline', display: 'flex', gap: '8px', minWidth: 0 },
+        'data-grill': 'header',
+        'data-grill-intent-row': true,
+        style: { alignItems: 'baseline', display: 'grid', gridTemplateColumns: '64px minmax(0, 1fr)', lineHeight: '16px', minWidth: 0 },
         children: [
-          jsx('span', { style: { ...monoStyle, fontSize: '10px', letterSpacing: '0.12em' }, children: 'INTENT' }),
-          jsx('span', { style: { ...typeStyle, fontSize: '12px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: state.intent, children: state.intent })
+          jsx('span', { 'data-grill-intent-label': true, style: { ...monoStyle, fontSize: '12px', letterSpacing: '0.12em' }, children: 'INTENT' }),
+          jsx('span', { 'data-grill-intent-text': true, style: { ...typeStyle, fontSize: '12px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: state.intent, children: state.intent })
         ]
       }),
       jsx(Ladder, { ladder: state.ladder }),
@@ -657,7 +694,9 @@ export default {
       {
         id: 'middleware',
         area: COMPOSER_AREAS.middleware,
-        data: { handler: draft => ($grill.get().status === 'briefing' ? null : draft) }
+        // While a ladder is open the composer is intentionally empty; an Enter
+        // that reaches the app's submit path anyway must not fire a blank turn.
+        data: { handler: draft => ($grill.get().status !== 'idle' ? null : draft) }
       },
       {
         id: 'palette-start',
