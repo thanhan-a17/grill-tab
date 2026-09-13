@@ -94,7 +94,10 @@ export function reduceGrill(state, action) {
       return state.status === 'done' ? { ...state, force: true, status: 'asking' } : state
     case 'WRITE_BRIEF': {
       if (state.status !== 'active' && state.status !== 'done') return state
-      const next = action.includeCurrent ? withCommittedCurrent(state, action.answer) : state
+      const hasExplicitAnswer = Boolean(action.answer && String(action.answer).trim())
+      const next = (action.includeCurrent && hasExplicitAnswer)
+        ? withCommittedCurrent(state, String(action.answer).trim())
+        : { ...state, current: null, answer: '' }
       return { ...next, status: 'briefing' }
     }
     case 'BRIEF_READY':

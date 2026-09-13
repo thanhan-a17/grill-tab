@@ -127,6 +127,46 @@ test('checkpoint edits are blocked while briefing or after finalization', () => 
     assert.deepEqual(removed, state)
   }
 })
+test('WRITE_BRIEF on active question with empty answer does not adopt recommendation and only uses closed answers', () => {
+  const ladder = [
+    { answer: 'Ans 1', category: 'a', question: 'Q1', recommended: 'R1', settledFromRecommendation: false },
+    { answer: 'Ans 2', category: 'b', question: 'Q2', recommended: 'R2', settledFromRecommendation: false },
+    { answer: 'Ans 3', category: 'c', question: 'Q3', recommended: 'R3', settledFromRecommendation: false }
+  ]
+  const state = {
+    ...initialGrillState(),
+    answer: '',
+    current: { category: 'd', options: [], question: 'Q4?', recommended: 'R4 default' },
+    ladder,
+    status: 'active'
+  }
+
+  // User hits enter without answering question 4
+  const briefing = reduceGrill(state, { type: 'WRITE_BRIEF', answer: '', includeCurrent: true })
+  assert.equal(briefing.status, 'briefing')
+  assert.equal(briefing.current, null)
+  assert.equal(briefing.ladder.length, 3, 'Ladder must only contain the 3 closed answers, not defaulting Q4')
+  assert.deepEqual(briefing.ladder, ladder)
+})
+
+test('WRITE_BRIEF on active question with explicit answer commits that answer', () => {
+  const ladder = [
+    { answer: 'Ans 1', category: 'a', question: 'Q1', recommended: 'R1', settledFromRecommendation: false }
+  ]
+  const state = {
+    ...initialGrillState(),
+    answer: 'Explicit 2',
+    current: { category: 'b', options: [], question: 'Q2?', recommended: 'R2 default' },
+    ladder,
+    status: 'active'
+  }
+
+  const briefing = reduceGrill(state, { type: 'WRITE_BRIEF', answer: 'Explicit 2', includeCurrent: true })
+  assert.equal(briefing.status, 'briefing')
+  assert.equal(briefing.ladder.length, 2)
+  assert.equal(briefing.ladder[1].answer, 'Explicit 2')
+})
+
 test('end-to-end flow: checkpoint edit, auto-save, remove, later answer preservation, post-finalization edit blocking, composer replacement, and automatic close', () => {
   // Composer simulation
   let composerDraft = 'Build an offline sync tool'
