@@ -9,6 +9,8 @@ export function initialGrillState() {
     ladder: [],
     reason: '',
     restoreIntent: '',
+    editingIndex: null,
+    finalized: false,
     status: 'idle'
   }
 }
@@ -32,6 +34,18 @@ function withCommittedCurrent(state, answer) {
     escapeArmed: false,
     ladder: [...state.ladder, asRung(state.current, answer ?? state.answer)]
   }
+}
+
+function validCheckpointIndex(state, index) {
+  return Number.isInteger(index) && index >= 0 && index < state.ladder.length
+}
+
+function canEditCheckpoint(state, index) {
+  return !state.finalized && ['active', 'done'].includes(state.status) && validCheckpointIndex(state, index)
+}
+
+function canStartCheckpointEdit(state) {
+  return !state.finalized && ['active', 'done'].includes(state.status)
 }
 
 export function reduceGrill(state, action) {
@@ -84,7 +98,34 @@ export function reduceGrill(state, action) {
       return { ...next, status: 'briefing' }
     }
     case 'BRIEF_READY':
-      return state.status === 'briefing' ? { ...state, brief: action.brief || '', status: 'preview' } : state
+      return state.status === 'briefing'
+        ? { ...state, brief: action.brief || '', finalized: true, status: 'finalized' }
+        : state
+    case 'START_EDIT_CHECKPOINT':
+      return canStartCheckpointEdit(state) ? { ...state, editingIndex: action.index } : state
+    case 'CANCEL_EDIT_CHECKPOINT':
+      return { ...state, editingIndex: null }
+    case 'SAVE_CHECKPOINT':
+      return canEditCheckpoint(state, action.index)
+        ? {
+            ...state,
+            editingIndex: null,
+            ladder: state.ladder.map((rung, index) =>
+              index === action.index ? { ...rung, answer: action.answer, settledFromRecommendation: false } : rung
+            )
+          }
+        : state
+    case 'REMOVE_CHECKPOINT':
+      if (!canEditCheckpoint(state, action.index)) return state
+      return {
+        ...state,
+        editingIndex: state.editingIndex === action.index
+          ? null
+          : state.editingIndex > action.index
+            ? state.editingIndex - 1
+            : state.editingIndex,
+        ladder: state.ladder.filter((_, index) => index !== action.index)
+      }
     case 'BACK_TO_LADDER':
       return state.status === 'preview' ? { ...state, brief: '', status: 'done' } : state
     case 'BACKSPACE_EMPTY': {
@@ -103,23 +144,10 @@ export function reduceGrill(state, action) {
         ladder: state.ladder.slice(0, -1)
       }
     }
-    case 'REOPEN_RUNG': {
-      if (!['active', 'done'].includes(state.status) || action.index < 0 || action.index >= state.ladder.length) return state
-      const rung = state.ladder[action.index]
-      return {
-        ...state,
-        answer: rung.answer,
-        current: {
-          category: rung.category,
-          options: [],
-          question: rung.question,
-          recommended: rung.recommended
-        },
-        escapeArmed: false,
-        ladder: state.ladder.slice(0, action.index),
-        status: 'active'
-      }
-    }
+    case 'REOPEN_RUNG':
+      return canEditCheckpoint(state, action.index)
+        ? { ...state, editingIndex: action.index }
+        : state
     case 'ESC':
       if (state.status === 'preview') return { ...state, brief: '', status: 'done' }
       if (state.status !== 'active') return state

@@ -28,12 +28,11 @@ test('state machine advances idle → asking → active → done → briefing �
   state = reduceGrill(state, { type: 'WRITE_BRIEF' })
   assert.equal(state.status, 'briefing')
   state = reduceGrill(state, { type: 'BRIEF_READY', brief: '## Goal\nShip it' })
-  assert.equal(state.status, 'preview')
+  assert.equal(state.status, 'finalized')
+  assert.equal(state.finalized, true)
+  assert.equal(state.brief, '## Goal\nShip it')
   state = reduceGrill(state, { type: 'ESC' })
-  assert.equal(state.status, 'done')
-  state = reduceGrill(state, { type: 'WRITE_BRIEF' })
-  state = reduceGrill(state, { type: 'BRIEF_READY', brief: '## Goal\nShip it' })
-  assert.equal(state.status, 'preview')
+  assert.equal(state.status, 'finalized')
   state = reduceGrill(state, { type: 'RESET' })
   assert.equal(state.status, 'idle')
 })
@@ -59,10 +58,10 @@ test('Esc, Backspace, and rung rollback preserve the editable prior answer', () 
   assert.equal(reopened.answer, 'Desktop only')
   assert.equal(reopened.ladder.length, 1)
 
-  const rolledBack = reduceGrill(active, { type: 'REOPEN_RUNG', index: 0 })
-  assert.equal(rolledBack.current.question, 'What outcome?')
-  assert.equal(rolledBack.answer, 'A usable plugin')
-  assert.equal(rolledBack.ladder.length, 0)
+  const edited = reduceGrill(active, { type: 'REOPEN_RUNG', index: 0 })
+  assert.equal(edited.editingIndex, 0)
+  assert.deepEqual(edited.ladder, active.ladder)
+  assert.equal(edited.current.question, active.current.question)
 
   const dismissed = reduceGrill(active, { type: 'ESC' })
   assert.equal(dismissed.status, 'active')
@@ -72,6 +71,62 @@ test('Esc, Backspace, and rung rollback preserve the editable prior answer', () 
   assert.equal(exited.restoreIntent, 'Implement it')
 })
 
+test('checkpoint editing preserves later answers and saves only the selected rung', () => {
+  const later = { answer: 'Desktop only', category: 'scope', question: 'Where?', recommended: 'Desktop only', settledFromRecommendation: true }
+  const state = {
+    ...initialGrillState(),
+    current: { category: 'goal', options: [], question: 'What outcome?', recommended: 'A usable plugin' },
+    ladder: [
+      { answer: 'Original goal', category: 'goal', question: 'What outcome?', recommended: 'A usable plugin', settledFromRecommendation: true },
+      later
+    ],
+    status: 'active'
+  }
+
+  const editing = reduceGrill(state, { type: 'START_EDIT_CHECKPOINT', index: 0 })
+  assert.equal(editing.editingIndex, 0)
+  assert.deepEqual(editing.ladder, state.ladder)
+
+  const saved = reduceGrill(editing, { type: 'SAVE_CHECKPOINT', index: 0, answer: 'Updated goal' })
+  assert.equal(saved.editingIndex, null)
+  assert.deepEqual(saved.ladder, [
+    { ...state.ladder[0], answer: 'Updated goal', settledFromRecommendation: false },
+    later
+  ])
+  assert.deepEqual(saved.ladder[1], later)
+})
+
+test('removing a checkpoint preserves every other rung and adjusts an active edit index', () => {
+  const ladder = [
+    { answer: 'One', category: 'a', question: 'Q1', recommended: 'R1', settledFromRecommendation: false },
+    { answer: 'Two', category: 'b', question: 'Q2', recommended: 'R2', settledFromRecommendation: false },
+    { answer: 'Three', category: 'c', question: 'Q3', recommended: 'R3', settledFromRecommendation: false }
+  ]
+  const state = { ...initialGrillState(), ladder, editingIndex: 2, status: 'done' }
+  const removed = reduceGrill(state, { type: 'REMOVE_CHECKPOINT', index: 0 })
+  assert.deepEqual(removed.ladder, [ladder[1], ladder[2]])
+  assert.equal(removed.editingIndex, 1)
+
+  const removedEditing = reduceGrill(removed, { type: 'REMOVE_CHECKPOINT', index: 1 })
+  assert.deepEqual(removedEditing.ladder, [ladder[1]])
+  assert.equal(removedEditing.editingIndex, null)
+})
+
+test('checkpoint edits are blocked while briefing or after finalization', () => {
+  const rung = { answer: 'Keep', category: 'goal', question: 'Q', recommended: 'R', settledFromRecommendation: false }
+  for (const state of [
+    { ...initialGrillState(), ladder: [rung], status: 'briefing' },
+    { ...initialGrillState(), ladder: [rung], status: 'finalized', finalized: true },
+    { ...initialGrillState(), ladder: [rung], status: 'done', finalized: true }
+  ]) {
+    const started = reduceGrill(state, { type: 'START_EDIT_CHECKPOINT', index: 0 })
+    const saved = reduceGrill(state, { type: 'SAVE_CHECKPOINT', index: 0, answer: 'Changed' })
+    const removed = reduceGrill(state, { type: 'REMOVE_CHECKPOINT', index: 0 })
+    assert.deepEqual(started, state)
+    assert.deepEqual(saved, state)
+    assert.deepEqual(removed, state)
+  }
+})
 test('Tab from done forces another interrogation and settled recommendation rewrites the last rung', () => {
   let state = {
     ...initialGrillState(),
