@@ -38,7 +38,11 @@ def _engine():
     """Load the sibling engine without a top-level Hermes import dependency."""
     try:
         from . import grill_engine
-        return grill_engine
+        import importlib
+        try:
+            return importlib.reload(grill_engine)
+        except Exception:
+            return grill_engine
     except ImportError:
         module_path = Path(__file__).with_name("grill_engine.py")
         spec = importlib.util.spec_from_file_location("grill_tab_engine", module_path)
