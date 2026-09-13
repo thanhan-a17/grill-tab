@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import importlib.util
+import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -34,23 +38,33 @@ class BriefRequest(BaseModel):
     profile: Optional[str] = None
 
 
+_cached_engine: Any = None
+
+
 def _engine():
     """Load the sibling engine without a top-level Hermes import dependency."""
+    global _cached_engine
     try:
         from . import grill_engine
-        import importlib
         try:
             return importlib.reload(grill_engine)
         except Exception:
             return grill_engine
-    except ImportError:
-        module_path = Path(__file__).with_name("grill_engine.py")
-        spec = importlib.util.spec_from_file_location("grill_tab_engine", module_path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError("grill engine could not be loaded")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
+    except (ImportError, ValueError):
+        pass
+
+    module_path = Path(__file__).with_name("grill_engine.py")
+    spec = importlib.util.spec_from_file_location("grill_tab_engine", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("grill engine could not be loaded")
+    if _cached_engine is None:
+        _cached_engine = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(_cached_engine)
+    except Exception:
+        if not hasattr(_cached_engine, "interrogate"):
+            raise
+    return _cached_engine
 
 
 def _payload(request: InterrogateRequest | BriefRequest) -> dict:
@@ -64,6 +78,7 @@ async def interrogate(request: InterrogateRequest):
     try:
         return await asyncio.to_thread(_engine().interrogate, _payload(request))
     except Exception:
+        logger.exception("Grill interrogate error:")
         # The engine itself is failure-safe; this preserves the REST contract if it cannot import.
         return JSONResponse(status_code=500, content={"error": "engine unavailable"})
 
@@ -75,6 +90,7 @@ async def brief(request: BriefRequest):
     try:
         return await asyncio.to_thread(_engine().brief, _payload(request))
     except Exception:
+        logger.exception("Grill brief error:")
         return JSONResponse(status_code=500, content={"error": "engine unavailable"})
 
 

@@ -48,3 +48,23 @@ def test_health(monkeypatch):
     response = client(monkeypatch).get("/health")
     assert response.status_code == 200
     assert response.json() == {"ok": True, "model": "fake/model"}
+
+
+def test_real_engine_loader():
+    eng = plugin_api._engine()
+    assert eng is not None
+    assert hasattr(eng, "interrogate")
+    assert hasattr(eng, "brief")
+    assert hasattr(eng, "get_model_label")
+
+
+def test_standalone_spec_loader():
+    import importlib.util
+    api_path = Path(__file__).resolve().parents[1] / "dashboard" / "plugin_api.py"
+    spec = importlib.util.spec_from_file_location("hermes_dashboard_plugin_test", api_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    eng = mod._engine()
+    assert eng is not None
+    assert hasattr(eng, "interrogate")
+    assert hasattr(eng, "brief")
