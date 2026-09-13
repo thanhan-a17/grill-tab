@@ -8,13 +8,21 @@ CFG="$HOME_DIR/config.yaml"
 
 [[ -f "$CFG" ]] || { echo "No config.yaml at $HOME_DIR — is this a Hermes home?" >&2; exit 1; }
 
-# 1) Agent/back-end half: the package folder under plugins/ (symlink keeps `git pull` upgrades trivial).
+# 1) Agent/back-end half: copy the package into plugins/ (production must not follow working-tree symlinks).
 mkdir -p "$HOME_DIR/plugins"
-if [[ -e "$HOME_DIR/plugins/grill-tab" && ! -L "$HOME_DIR/plugins/grill-tab" ]]; then
-  echo "plugins/grill-tab exists and is not a symlink; leaving it alone." >&2
-else
-  ln -sfn "$SRC" "$HOME_DIR/plugins/grill-tab"
+if [[ -L "$HOME_DIR/plugins/grill-tab" ]]; then
+  rm "$HOME_DIR/plugins/grill-tab"
 fi
+mkdir -p "$HOME_DIR/plugins/grill-tab"
+rsync -a --delete \
+  --exclude='.git' \
+  --exclude='node_modules' \
+  --exclude='__pycache__' \
+  --exclude='tests' \
+  --exclude='docs' \
+  --exclude='scripts' \
+  --exclude='desktop' \
+  "$SRC/" "$HOME_DIR/plugins/grill-tab/"
 
 # 2) Desktop half: a COPY (the desktop watcher does not follow symlinks; re-run install.sh after upgrades).
 mkdir -p "$HOME_DIR/desktop-plugins/grill-tab"
@@ -41,7 +49,7 @@ PY
 cat <<EOF
 
 grill-tab installed into $HOME_DIR
-  package : $HOME_DIR/plugins/grill-tab -> $SRC
+  package : $HOME_DIR/plugins/grill-tab (copy)
   desktop : $HOME_DIR/desktop-plugins/grill-tab/plugin.js (copy)
 
 Next:

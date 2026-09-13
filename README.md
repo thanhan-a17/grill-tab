@@ -14,9 +14,15 @@ Designed for general agentic work (research, content, ops, code), not just dev.
 
 ```bash
 git clone <this repo> ~/projects/grill-tab
-~/projects/grill-tab/scripts/install.sh            # default home ~/.hermes
-~/projects/grill-tab/scripts/install.sh ~/.hermes/profiles/<name>   # a named profile
+~/projects/grill-tab/scripts/install.sh            # copy to ~/.hermes
+~/projects/grill-tab/scripts/install.sh ~/.hermes/profiles/<name>   # copy to a named profile
+~/projects/grill-tab/scripts/deploy.sh             # deploy all existing production homes + MacBook desktop plugin
 ```
+
+`install.sh` uses `rsync -a --delete` to copy the package; it never symlinks the working tree.
+`deploy.sh` installs the package into `~/.hermes` and every existing named profile that already
+contains grill-tab, then copies the desktop plugin to the MacBook over SSH. Production `~/.hermes`
+never contains symlinks into working trees; edit in `~/projects/grill-tab`, then run `scripts/deploy.sh`.
 
 Then restart the desktop backend (quit/reopen Hermes Desktop) and, in Capabilities → Plugins,
 make sure **Grill Tab** is on. Recommended model (fast, good questions):
