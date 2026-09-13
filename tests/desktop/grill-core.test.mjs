@@ -127,6 +127,120 @@ test('checkpoint edits are blocked while briefing or after finalization', () => 
     assert.deepEqual(removed, state)
   }
 })
+test('end-to-end flow: checkpoint edit, auto-save, remove, later answer preservation, post-finalization edit blocking, composer replacement, and automatic close', () => {
+  // Composer simulation
+  let composerDraft = 'Build an offline sync tool'
+  const fakeComposer = {
+    readDraft: () => composerDraft,
+    writeDraft: text => {
+      composerDraft = text
+      return true
+    }
+  }
+
+  // 1. Start from composer
+  let state = reduceGrill(initialGrillState(), { type: 'START', intent: fakeComposer.readDraft() })
+  fakeComposer.writeDraft('')
+  assert.equal(state.status, 'asking')
+  assert.equal(state.intent, 'Build an offline sync tool')
+  assert.equal(fakeComposer.readDraft(), '')
+
+  // 2. Answer question 1
+  state = reduceGrill(state, {
+    type: 'INTERROGATION',
+    response: { category: 'goal', done: false, options: [], question: 'What sync engine?', recommended: 'CRDT' }
+  })
+  state = reduceGrill(state, { type: 'COMMIT_ANSWER', answer: 'CRDT' })
+
+  // 3. Answer question 2
+  state = reduceGrill(state, {
+    type: 'INTERROGATION',
+    response: { category: 'scope', done: false, options: [], question: 'Which platforms?', recommended: 'Desktop only' }
+  })
+  state = reduceGrill(state, { type: 'COMMIT_ANSWER', answer: 'Desktop and Mobile' })
+
+  // 4. Answer question 3
+  state = reduceGrill(state, {
+    type: 'INTERROGATION',
+    response: { category: 'persistence', done: false, options: [], question: 'Storage format?', recommended: 'SQLite' }
+  })
+  state = reduceGrill(state, { type: 'COMMIT_ANSWER', answer: 'SQLite' })
+
+  // Done status
+  state = reduceGrill(state, { type: 'INTERROGATION', response: { done: true, reason: 'Nothing critical left.' } })
+  assert.equal(state.status, 'done')
+  assert.equal(state.ladder.length, 3)
+  assert.equal(state.ladder[0].answer, 'CRDT')
+  assert.equal(state.ladder[1].answer, 'Desktop and Mobile')
+  assert.equal(state.ladder[2].answer, 'SQLite')
+
+  // 5. Click previous checkpoint (rung 0) -> inline edit mode
+  // "Clicking a previous checkpoint preserves all later answers."
+  state = reduceGrill(state, { type: 'START_EDIT_CHECKPOINT', index: 0 })
+  assert.equal(state.editingIndex, 0)
+  assert.equal(state.ladder.length, 3)
+  assert.equal(state.ladder[1].answer, 'Desktop and Mobile', 'Later answer 1 preserved')
+  assert.equal(state.ladder[2].answer, 'SQLite', 'Later answer 2 preserved')
+
+  // 6. Inline edits auto-save without a Save button and return to the ladder
+  // "“Return to the ladder” means exit inline editing immediately after the change is committed."
+  state = reduceGrill(state, { type: 'SAVE_CHECKPOINT', index: 0, answer: 'Event Sourcing' })
+  assert.equal(state.editingIndex, null, 'Returned to the ladder')
+  assert.equal(state.ladder[0].answer, 'Event Sourcing', 'Updated answer committed')
+  assert.equal(state.ladder[1].answer, 'Desktop and Mobile', 'Later answer 1 preserved after save')
+  assert.equal(state.ladder[2].answer, 'SQLite', 'Later answer 2 preserved after save')
+
+  // 7. Remove checkpoint 1
+  // "Removing a checkpoint preserves later answers and leaves the remaining ladder usable."
+  state = reduceGrill(state, { type: 'REMOVE_CHECKPOINT', index: 1 })
+  assert.equal(state.ladder.length, 2)
+  assert.equal(state.ladder[0].answer, 'Event Sourcing')
+  assert.equal(state.ladder[1].answer, 'SQLite', 'Later answer preserved after removal of earlier rung')
+  assert.equal(state.editingIndex, null)
+
+  // Verify remaining ladder is still usable for editing
+  state = reduceGrill(state, { type: 'START_EDIT_CHECKPOINT', index: 1 })
+  assert.equal(state.editingIndex, 1)
+  state = reduceGrill(state, { type: 'SAVE_CHECKPOINT', index: 1, answer: 'IndexedDB' })
+  assert.equal(state.ladder[1].answer, 'IndexedDB')
+  assert.equal(state.editingIndex, null)
+
+  // 8. Finalization & Post-finalization edit blocking
+  // Enter pressed -> finalization begins
+  state = reduceGrill(state, { type: 'WRITE_BRIEF' })
+  assert.equal(state.status, 'briefing')
+
+  // While briefing, edits must be blocked
+  assert.deepEqual(reduceGrill(state, { type: 'START_EDIT_CHECKPOINT', index: 0 }), state)
+  assert.deepEqual(reduceGrill(state, { type: 'SAVE_CHECKPOINT', index: 0, answer: 'No-op' }), state)
+  assert.deepEqual(reduceGrill(state, { type: 'REMOVE_CHECKPOINT', index: 0 }), state)
+
+  // Brief is ready
+  const finalizedPrompt = fallbackBrief(state.intent, state.ladder)
+  state = reduceGrill(state, { type: 'BRIEF_READY', brief: finalizedPrompt })
+  assert.equal(state.status, 'finalized')
+  assert.equal(state.finalized, true)
+
+  // After finalization, edits must be blocked
+  // "Checkpoints are editable only before finalization."
+  // "Disable checkpoint editing after finalization."
+  assert.deepEqual(reduceGrill(state, { type: 'START_EDIT_CHECKPOINT', index: 0 }), state)
+  assert.deepEqual(reduceGrill(state, { type: 'SAVE_CHECKPOINT', index: 0, answer: 'No-op' }), state)
+  assert.deepEqual(reduceGrill(state, { type: 'REMOVE_CHECKPOINT', index: 0 }), state)
+
+  // 9. Composer replacement and automatic close
+  // "After answering Grill questions and pressing Enter, the finalized prompt replaces the composer contents directly."
+  // "Grill closes automatically after placing the prompt in the composer."
+  fakeComposer.writeDraft(state.brief)
+  state = reduceGrill(state, { type: 'RESET' })
+
+  assert.equal(state.status, 'idle', 'Grill closed automatically')
+  assert.ok(fakeComposer.readDraft().includes('## Goal\nBuild an offline sync tool'), 'Prompt replaced composer contents directly')
+  assert.ok(fakeComposer.readDraft().includes('Event Sourcing'), 'Edited checkpoint reflected in finalized prompt')
+  assert.ok(fakeComposer.readDraft().includes('IndexedDB'), 'Preserved later checkpoint reflected in finalized prompt')
+  assert.ok(!fakeComposer.readDraft().includes('Desktop and Mobile'), 'Removed checkpoint excluded from finalized prompt')
+})
+
 test('checkpoint edit actions require a valid rung and editable status', () => {
   const state = {
     ...initialGrillState(),
