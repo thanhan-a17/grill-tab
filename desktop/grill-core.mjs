@@ -44,8 +44,8 @@ function canEditCheckpoint(state, index) {
   return !state.finalized && ['active', 'done'].includes(state.status) && validCheckpointIndex(state, index)
 }
 
-function canStartCheckpointEdit(state) {
-  return !state.finalized && ['active', 'done'].includes(state.status)
+function canStartCheckpointEdit(state, index) {
+  return !state.finalized && ['active', 'done'].includes(state.status) && validCheckpointIndex(state, index)
 }
 
 export function reduceGrill(state, action) {
@@ -102,9 +102,9 @@ export function reduceGrill(state, action) {
         ? { ...state, brief: action.brief || '', finalized: true, status: 'finalized' }
         : state
     case 'START_EDIT_CHECKPOINT':
-      return canStartCheckpointEdit(state) ? { ...state, editingIndex: action.index } : state
+      return canStartCheckpointEdit(state, action.index) ? { ...state, editingIndex: action.index } : state
     case 'CANCEL_EDIT_CHECKPOINT':
-      return { ...state, editingIndex: null }
+      return canEditCheckpoint(state, state.editingIndex) ? { ...state, editingIndex: null } : state
     case 'SAVE_CHECKPOINT':
       return canEditCheckpoint(state, action.index)
         ? {

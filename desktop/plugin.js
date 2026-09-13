@@ -63,8 +63,8 @@ function canEditCheckpoint(state, index) {
   return !state.finalized && ['active', 'done'].includes(state.status) && validCheckpointIndex(state, index)
 }
 
-function canStartCheckpointEdit(state) {
-  return !state.finalized && ['active', 'done'].includes(state.status)
+function canStartCheckpointEdit(state, index) {
+  return !state.finalized && ['active', 'done'].includes(state.status) && validCheckpointIndex(state, index)
 }
 
 export function reduceGrill(state, action) {
@@ -121,9 +121,9 @@ export function reduceGrill(state, action) {
         ? { ...state, brief: action.brief || '', finalized: true, status: 'finalized' }
         : state
     case 'START_EDIT_CHECKPOINT':
-      return canStartCheckpointEdit(state) ? { ...state, editingIndex: action.index } : state
+      return canStartCheckpointEdit(state, action.index) ? { ...state, editingIndex: action.index } : state
     case 'CANCEL_EDIT_CHECKPOINT':
-      return { ...state, editingIndex: null }
+      return canEditCheckpoint(state, state.editingIndex) ? { ...state, editingIndex: null } : state
     case 'SAVE_CHECKPOINT':
       return canEditCheckpoint(state, action.index)
         ? {
@@ -368,11 +368,19 @@ async function writeBrief() {
       }
     })
     if (serial !== requestSerial) return
-    update({ type: 'BRIEF_READY', brief: typeof response?.brief === 'string' && response.brief.trim() ? response.brief : fallbackBrief(requestState.intent, requestState.ladder) })
+    const brief = typeof response?.brief === 'string' && response.brief.trim()
+      ? response.brief
+      : fallbackBrief(requestState.intent, requestState.ladder)
+    update({ type: 'BRIEF_READY', brief })
+    if (!composerAdapter.writeDraft(brief)) host.notify({ kind: 'error', message: 'Could not write the brief into the composer.' })
+    update({ type: 'RESET' })
   } catch (error) {
     if (serial !== requestSerial) return
     host.notifyError(error, 'Brief model unavailable; using the local template.')
-    update({ type: 'BRIEF_READY', brief: fallbackBrief(requestState.intent, requestState.ladder) })
+    const brief = fallbackBrief(requestState.intent, requestState.ladder)
+    update({ type: 'BRIEF_READY', brief })
+    if (!composerAdapter.writeDraft(brief)) host.notify({ kind: 'error', message: 'Could not write the brief into the composer.' })
+    update({ type: 'RESET' })
   }
 }
 
@@ -438,46 +446,111 @@ function HintRow({ done = false }) {
   })
 }
 
-function Ladder({ ladder }) {
+function CheckpointEditor({ rung, index }) {
+  const inputRef = useRef(null)
+  const committedRef = useRef(false)
+  useEffect(() => {
+    inputRef.current?.focus({ preventScroll: true })
+    inputRef.current?.select()
+  }, [])
+  const commit = event => {
+    if (committedRef.current) return
+    committedRef.current = true
+    update({ type: 'SAVE_CHECKPOINT', index, answer: event.currentTarget.value })
+  }
+  const cancel = event => {
+    if (committedRef.current) return
+    committedRef.current = true
+    update({ type: 'CANCEL_EDIT_CHECKPOINT' })
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  return jsxs('div', {
+    'data-grill': 'checkpoint-editor',
+    'data-grill-checkpoint-editor': true,
+    style: { display: 'grid', gridColumn: '1 / -1', gridTemplateColumns: '20px minmax(0, 1fr) auto', rowGap: '4px' },
+    children: [
+      jsx('span', { 'data-grill-rung-number': true, style: { ...monoStyle, fontSize: '12px' }, children: String(index + 1).padStart(2, '0') }),
+      jsx('span', { 'data-grill-checkpoint-question': true, style: { ...typeStyle, fontSize: '12px', lineHeight: '16px' }, children: rung.question }),
+      jsx('button', {
+        'aria-label': `Remove checkpoint ${index + 1}`,
+        'data-grill': 'checkpoint-remove',
+        'data-grill-checkpoint-remove': true,
+        onClick: event => {
+          event.preventDefault()
+          event.stopPropagation()
+          update({ type: 'REMOVE_CHECKPOINT', index })
+        },
+        onMouseDown: event => event.preventDefault(),
+        style: { ...typeStyle, background: 'transparent', border: 0, cursor: 'pointer', fontSize: '11px', padding: '0 0 0 8px' },
+        type: 'button',
+        children: 'Remove'
+      }),
+      jsx('input', {
+        'aria-label': `Edit checkpoint ${index + 1}`,
+        'data-grill': 'checkpoint-input',
+        'data-grill-checkpoint-input': true,
+        defaultValue: rung.answer,
+        onBlur: commit,
+        onKeyDown: event => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            event.stopPropagation()
+            commit(event)
+          } else if (event.key === 'Escape') {
+            cancel(event)
+          }
+        },
+        ref: inputRef,
+        style: { ...typeStyle, background: 'transparent', border: 0, borderBottom: `1px solid ${INPUT_LINE}`, borderRadius: 0, boxSizing: 'border-box', fontSize: '13px', gridColumn: '2 / -1', lineHeight: '20px', outline: 'none', padding: '6px 0', width: '100%' }
+      })
+    ]
+  })
+}
+
+function Ladder({ ladder, editingIndex, canEdit }) {
   if (!ladder.length) return null
   return jsx('div', {
     'data-grill-ladder': true,
     style: { display: 'grid', marginTop: '16px', rowGap: '8px' },
-    children: ladder.map((rung, index) =>
-      jsxs('button', {
-        'data-grill': 'rung',
-        'data-grill-rung': true,
-        key: `${rung.question}-${index}`,
-        onClick: () => update({ type: 'REOPEN_RUNG', index }),
-        style: {
-          ...typeStyle,
-          alignItems: 'baseline',
-          background: 'transparent',
-          border: 0,
-          cursor: 'pointer',
-          display: 'grid',
-          gridTemplateColumns: '20px minmax(0, 1fr) minmax(0, 0.8fr)',
-          lineHeight: '16px',
-          minWidth: 0,
-          opacity: PAST_OPACITY,
-          padding: 0,
-          textAlign: 'left',
-          width: '100%'
-        },
-        type: 'button',
-        children: [
-          jsx('span', { 'data-grill-rung-number': true, style: { ...monoStyle, fontSize: '12px' }, children: String(index + 1).padStart(2, '0') }),
-          jsx('span', { 'data-grill-rung-text': true, style: { fontSize: '12px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: rung.question, children: rung.question }),
-          jsx(Tip, {
-            label: rung.answer,
-            children: jsx('span', {
-              'data-grill-rung-answer': true,
-              style: { color: 'var(--ui-text-primary, inherit)', fontSize: '12px', minWidth: 0, overflow: 'hidden', textAlign: 'right', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-              children: `${rung.answer}${rung.settledFromRecommendation ? ' (recommended)' : ''}`
+    children: ladder.map((rung, index) => editingIndex === index && canEdit
+      ? jsx(CheckpointEditor, { index, key: `${rung.question}-${index}`, rung })
+      : jsxs('button', {
+          'aria-disabled': !canEdit,
+          'data-grill': 'rung',
+          'data-grill-rung': true,
+          disabled: !canEdit,
+          key: `${rung.question}-${index}`,
+          onClick: () => { if (canEdit) update({ type: 'START_EDIT_CHECKPOINT', index }) },
+          style: {
+            ...typeStyle,
+            alignItems: 'baseline',
+            background: 'transparent',
+            border: 0,
+            cursor: canEdit ? 'pointer' : 'default',
+            display: 'grid',
+            gridTemplateColumns: '20px minmax(0, 1fr) minmax(0, 0.8fr)',
+            lineHeight: '16px',
+            minWidth: 0,
+            opacity: PAST_OPACITY,
+            padding: 0,
+            textAlign: 'left',
+            width: '100%'
+          },
+          type: 'button',
+          children: [
+            jsx('span', { 'data-grill-rung-number': true, style: { ...monoStyle, fontSize: '12px' }, children: String(index + 1).padStart(2, '0') }),
+            jsx('span', { 'data-grill-rung-text': true, style: { fontSize: '12px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: rung.question, children: rung.question }),
+            jsx(Tip, {
+              label: rung.answer,
+              children: jsx('span', {
+                'data-grill-rung-answer': true,
+                style: { color: 'var(--ui-text-primary, inherit)', fontSize: '12px', minWidth: 0, overflow: 'hidden', textAlign: 'right', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                children: `${rung.answer}${rung.settledFromRecommendation ? ' (recommended)' : ''}`
+              })
             })
-          })
-        ]
-      })
+          ]
+        })
     )
   })
 }
@@ -677,6 +750,7 @@ function LoadingRow({ children }) {
 function GrillLadder() {
   const state = useValue($grill)
   if (state.status === 'idle') return null
+  const canEdit = !state.finalized && ['active', 'done'].includes(state.status)
   const body =
     state.status === 'asking'
       ? jsx(LoadingRow, { children: 'Finding the next decision…' })
@@ -701,7 +775,11 @@ function GrillLadder() {
           jsx('span', { 'data-grill-intent-text': true, style: { ...typeStyle, fontSize: '12px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: state.intent, children: state.intent })
         ]
       }),
-      jsx(Ladder, { ladder: state.ladder }),
+      jsx(Ladder, {
+        canEdit,
+        editingIndex: state.editingIndex,
+        ladder: state.ladder
+      }),
       body
     ]
   })

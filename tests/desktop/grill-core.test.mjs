@@ -127,6 +127,21 @@ test('checkpoint edits are blocked while briefing or after finalization', () => 
     assert.deepEqual(removed, state)
   }
 })
+test('checkpoint edit actions require a valid rung and editable status', () => {
+  const state = {
+    ...initialGrillState(),
+    ladder: [{ answer: 'Keep', category: 'goal', question: 'Q', recommended: 'R', settledFromRecommendation: false }],
+    status: 'active'
+  }
+  assert.deepEqual(reduceGrill(state, { type: 'START_EDIT_CHECKPOINT', index: -1 }), state)
+  assert.deepEqual(reduceGrill(state, { type: 'START_EDIT_CHECKPOINT', index: 1 }), state)
+  const editing = reduceGrill(state, { type: 'START_EDIT_CHECKPOINT', index: 0 })
+  assert.equal(editing.editingIndex, 0)
+  const finalized = { ...editing, finalized: true, status: 'finalized' }
+  assert.deepEqual(reduceGrill(finalized, { type: 'CANCEL_EDIT_CHECKPOINT' }), finalized)
+})
+
+
 test('Tab from done forces another interrogation and settled recommendation rewrites the last rung', () => {
   let state = {
     ...initialGrillState(),
