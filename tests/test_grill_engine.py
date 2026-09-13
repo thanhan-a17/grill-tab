@@ -40,6 +40,45 @@ def test_parses_json_wrapped_in_prose_and_fence():
     assert parsed["recommended"] == "Publish a concise competitor digest."
 
 
+def test_parses_thinking_output():
+    text = (
+        "<think>\nUser intent is clear. Let's consider {\"example\": false}.\n</think>\n"
+        "```json\n" + question_json(category="deliverables") + "\n```"
+    )
+    parsed = engine.parse_interrogate_response(text)
+    assert parsed["done"] is False
+    assert parsed["category"] == "deliverable"
+    assert parsed["question"] == "What weekly outcome matters most?"
+
+
+def test_category_normalization():
+    cases = [
+        ("goals", "goal"),
+        ("Deliverables", "deliverable"),
+        ("scope & non-goals", "scope"),
+        ("testing & QA", "verification"),
+        ("technical stack", "architecture"),
+        ("unknown_custom_category", "goal"),
+    ]
+    for raw_cat, expected in cases:
+        parsed = engine.parse_interrogate_response(question_json(category=raw_cat))
+        assert parsed["category"] == expected, f"Failed for {raw_cat}"
+
+
+def test_implicit_done_false_when_question_present():
+    payload = '{"question": "Where should it deploy?", "options": ["Cloudflare", "VPS"]}'
+    parsed = engine.parse_interrogate_response(payload)
+    assert parsed["done"] is False
+    assert parsed["question"] == "Where should it deploy?"
+    assert parsed["recommended"] == "Cloudflare"
+
+
+def test_long_question_truncated_to_18_words():
+    long_q = " " .join(f"word{i}" for i in range(30))
+    parsed = engine.parse_interrogate_response(question_json(question=long_q))
+    assert len(parsed["question"].split()) == 18
+
+
 def test_garbage_becomes_done_fallback():
     parsed = engine.parse_interrogate_response("not JSON at all")
     assert parsed["done"] is True
@@ -65,6 +104,28 @@ def test_deferral_sets_settled_from_recommendation():
             llm=fake_json(question_json(category="scope")),
         )
         assert result["settled_from_recommendation"] is True
+
+
+def test_brief_strips_thinking_and_appends_missing_directive():
+    raw = (
+        "<think>Drafting brief...</think>\n"
+        "## Goal\nPublish a weekly competitor newsletter.\n\n"
+        "## Deliverable\nA Markdown newsletter file in content/newsletters/."
+    )
+    parsed = engine.parse_brief_response(raw)
+    assert "## Goal" in parsed
+    assert "<think>" not in parsed
+    assert "## Directive" in parsed
+    assert "Work autonomously." in parsed
+
+
+def test_brief_normalizes_heading_level():
+    raw = (
+        "# Goal\nPublish a newsletter.\n\n"
+        "## Directive\nWork autonomously. Do not re-ask anything above."
+    )
+    parsed = engine.parse_brief_response(raw)
+    assert "## Goal" in parsed
 
 
 def test_brief_falls_back_to_template():
