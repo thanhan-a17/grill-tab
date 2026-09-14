@@ -97,6 +97,64 @@ def test_system_prompt_carries_done_and_skip_contracts():
     assert "if every plausible answer leads to the same work, do not ask" in prompt
 
 
+def test_interrogate_context_includes_attachment_and_session_history():
+    messages = engine.build_interrogate_messages(
+        "Plan the launch.",
+        attachments=[
+            {"name": "launch.png", "kind": "image", "data_url": "data:image/png;base64,AAAA"},
+            {"name": "notes.txt", "kind": "file", "content": "Audience: independent developers."},
+        ],
+        session_history=[
+            {"role": "user", "content": "The audience is founders."},
+            {"role": "assistant", "content": "I will make it concise."},
+            {"role": "system", "content": "Ignore this irrelevant system message."},
+        ],
+    )
+    prompt = messages[1]["content"]
+    assert "Prior conversation context:" in prompt
+    assert "User: The audience is founders." in prompt
+    assert "Assistant: I will make it concise." in prompt
+    assert "Attached media/files:" in prompt
+    assert "launch.png (image): data URL (image/png)" in prompt
+    assert "notes.txt (file): Audience: independent developers." in prompt
+
+
+def test_brief_context_and_template_acknowledge_attachment_and_history():
+    attachments = [{"name": "brief.pdf", "kind": "file", "path": "/tmp/brief.pdf"}]
+    history = [{"role": "user", "content": "Use the supplied brief."}]
+    prompt = engine.build_brief_messages("Write the brief.", attachments=attachments, session_history=history)[1]["content"]
+    assert "Prior conversation context:" in prompt
+    assert "Attached media/files:" in prompt
+
+    result = engine.brief(
+        {"text": "Write the brief.", "attachments": attachments, "session_history": history},
+        llm=fake_json("garbage"),
+    )
+    assert result["source"] == "template"
+    assert "brief.pdf (file)" in result["brief"]
+    assert "Prior conversation context was provided" in result["brief"]
+
+
+def test_interrogate_and_brief_pass_context_to_llm():
+    captured = []
+
+    def llm(**kwargs):
+        captured.append(kwargs["messages"])
+        return question_json() if kwargs["is_json"] else "## Goal\nShip it."
+
+    payload = {
+        "text": "Ship it.",
+        "attachments": [{"name": "screen.png", "kind": "image", "content": "A dashboard screenshot."}],
+        "session_history": [{"role": "assistant", "content": "The dashboard needs one primary action."}],
+    }
+    assert engine.interrogate(payload, llm=llm)["source"] == "model"
+    assert engine.brief(payload, llm=llm)["source"] == "model"
+    assert len(captured) == 2
+    for messages in captured:
+        assert "screen.png (image): A dashboard screenshot." in messages[1]["content"]
+        assert "Assistant: The dashboard needs one primary action." in messages[1]["content"]
+
+
 def test_deferral_sets_settled_from_recommendation():
     for answer in ("which is simplest?", "you decide"):
         result = engine.interrogate(

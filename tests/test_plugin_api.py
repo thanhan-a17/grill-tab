@@ -38,6 +38,37 @@ def test_interrogate_and_brief_routes(monkeypatch):
     assert brief.json()["source"] == "model"
 
 
+def test_routes_pass_attachments_and_session_history(monkeypatch):
+    class RecordingEngine(FakeEngine):
+        def __init__(self):
+            self.payloads = []
+
+        def interrogate(self, payload):
+            self.payloads.append(("interrogate", payload))
+            return super().interrogate(payload)
+
+        def brief(self, payload):
+            self.payloads.append(("brief", payload))
+            return super().brief(payload)
+
+    engine = RecordingEngine()
+    monkeypatch.setattr(plugin_api, "_engine", lambda: engine)
+    app = FastAPI()
+    app.include_router(plugin_api.router)
+    api = TestClient(app)
+    extras = {
+        "attachments": [{"name": "reference.png", "kind": "image", "data_url": "data:image/png;base64,AA"}],
+        "session_history": [{"role": "user", "content": "Use this reference."}],
+    }
+    assert api.post("/interrogate", json={"text": "make a report", **extras}).status_code == 200
+    assert api.post("/brief", json={"text": "make a report", **extras}).status_code == 200
+
+    assert engine.payloads == [
+        ("interrogate", {"text": "make a report", "ladder": [], "cwd": None, "profile": None, "force": False, **extras}),
+        ("brief", {"text": "make a report", "ladder": [], "cwd": None, "profile": None, **extras}),
+    ]
+
+
 def test_empty_text_is_contract_error(monkeypatch):
     response = client(monkeypatch).post("/interrogate", json={"text": "  ", "ladder": []})
     assert response.status_code == 400

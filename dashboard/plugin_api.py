@@ -26,6 +26,8 @@ class LadderRung(BaseModel):
 class InterrogateRequest(BaseModel):
     text: str
     ladder: list[LadderRung] = Field(default_factory=list)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    session_history: list[dict[str, Any]] = Field(default_factory=list)
     cwd: Optional[str] = None
     profile: Optional[str] = None
     force: bool = False
@@ -34,6 +36,8 @@ class InterrogateRequest(BaseModel):
 class BriefRequest(BaseModel):
     text: str
     ladder: list[LadderRung] = Field(default_factory=list)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    session_history: list[dict[str, Any]] = Field(default_factory=list)
     cwd: Optional[str] = None
     profile: Optional[str] = None
 

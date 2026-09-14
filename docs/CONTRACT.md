@@ -5,12 +5,23 @@ All bodies JSON. Errors: HTTP 4xx/5xx with `{ "error": string }`; the desktop ha
 non-2xx from `/interrogate` as `done` with reason "engine unavailable", and from `/brief` as
 "use local template".
 
+## Request context fields (both endpoints)
+Both `POST /interrogate` and `POST /brief` additionally accept these optional fields:
+
+- `attachments`: a list of attachment objects. Each has
+  `{ "name": string, "kind": "image"|"file", "data_url": string|null, "content": string|null, "path": string|null }`.
+  The backend supplies the model with the filename, kind, and a bounded text preview; for a data URL it supplies a media-type description rather than its encoded body.
+- `session_history`: a list of `{ "role": "user"|"assistant"|"system", "content": string }` objects.
+  Prior user and assistant messages are injected as conversation context; system entries are accepted but are not rendered as user-supplied conversation context.
+
 ## POST /interrogate
 Request
 ```json
 {
   "text": "string, the user's draft intent (required, non-empty)",
   "ladder": [ { "question": "string", "answer": "string", "category": "string|null" } ],
+  "attachments": [ { "name": "string", "kind": "image|file", "data_url": "string|null", "content": "string|null", "path": "string|null" } ],
+  "session_history": [ { "role": "user|assistant|system", "content": "string" } ],
   "cwd": "string|null",
   "profile": "string|null",
   "force": false
@@ -41,7 +52,14 @@ last ladder answer to `previous.recommended` and marks it "(recommended)".
 ## POST /brief
 Request
 ```json
-{ "text": "string", "ladder": [ { "question": "…", "answer": "…", "category": "…" } ], "cwd": "string|null", "profile": "string|null" }
+{
+  "text": "string, required, non-empty",
+  "ladder": [ { "question": "…", "answer": "…", "category": "…" } ],
+  "attachments": [ { "name": "string", "kind": "image|file", "data_url": "string|null", "content": "string|null", "path": "string|null" } ],
+  "session_history": [ { "role": "user|assistant|system", "content": "string" } ],
+  "cwd": "string|null",
+  "profile": "string|null"
+}
 ```
 Response 200
 ```json

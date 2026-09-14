@@ -27,12 +27,14 @@ Skip-if-same-plan rule: if every plausible answer leads to the same work, do not
 If the prior answer is a question, hesitation, "you decide", or asks which is simplest, treat the prior recommendation as settled. Do not re-ask or rephrase it; set settled_from_recommendation true.
 Trivial greetings, thanks, and tiny underspecified intents must return done=true immediately with a one-line reason; do not manufacture questions.
 Prefer the highest-leverage unanswered category: goal, deliverable, scope, verification. Use architecture only for clearly code-oriented intents. Do not repeat a category unless the user opened a new branch.
+Analyze attached media/files using their supplied descriptions or previews, and build directly on prior conversation context instead of re-asking settled information.
 Never ask generic vanilla questions about language, tests, or error handling. Questions must be 18 words or fewer.
 Return JSON only, with exactly: done (boolean), reason (string or null), question (string or null), recommended (string or null), options (array), category (goal|deliverable|scope|verification|architecture|null), settled_from_recommendation (boolean)."""
 
 _BRIEF_SYSTEM = """Write a concise execution brief from the original intent and settled ladder. Return markdown only, at most 250 words.
 Use these sections exactly when they have content: ## Goal, ## Success criteria, ## Deliverable, ## Scope & non-goals, ## Settled decisions, ## Constraints, ## Verify before reporting done, ## Assumptions to make explicitly (do not ask), ## Directive.
 Goal must be an outcome, not an activity. Success criteria must be observable. Settled decisions are directives, not Q/A.
+Analyze attached media/files using their supplied descriptions or previews, and treat prior conversation context as established context for the brief.
 Never invent facts not settled by the ladder; put necessary unresolved choices under Assumptions.
 The Directive must say: Work autonomously. Do not re-ask anything above. Ask only if blocked by something outside this brief."""
 
@@ -282,12 +284,72 @@ def _is_deferral(rungs: Iterable[Mapping[str, str]]) -> bool:
     return bool(items and _DEFERRAL_RE.search(items[-1].get("answer", "")))
 
 
-def _context_message(text: str, ladder: Any, cwd: Any, profile: str | None) -> str:
+def _render_session_history(session_history: Any) -> str | None:
+    if not isinstance(session_history, list):
+        return None
+    messages: list[str] = []
+    for item in session_history:
+        if not isinstance(item, Mapping):
+            continue
+        role = _clean_text(item.get("role")).lower()
+        content = _clean_text(item.get("content"))
+        if role not in {"user", "assistant"} or not content:
+            continue
+        messages.append(f"{role.title()}: {content[:2000]}")
+    return "\n".join(messages) or None
+
+
+def _attachment_description(attachment: Mapping[str, Any]) -> str | None:
+    name = _clean_text(attachment.get("name")) or "unnamed attachment"
+    kind = _clean_text(attachment.get("kind")).lower()
+    if kind not in {"image", "file"}:
+        return None
+    content = _clean_text(attachment.get("content"))
+    if content:
+        preview = content[:2000]
+    else:
+        data_url = _clean_text(attachment.get("data_url"))
+        if data_url.startswith("data:"):
+            media_type = data_url[5:].split(";", 1)[0].split(",", 1)[0] or "unknown"
+            preview = f"data URL ({media_type})"
+        else:
+            path = _clean_text(attachment.get("path"))
+            preview = f"path: {path}" if path else "no preview supplied"
+    return f"{name} ({kind}): {preview}"
+
+
+def _render_attachments(attachments: Any) -> str | None:
+    if not isinstance(attachments, list):
+        return None
+    descriptions = [
+        description
+        for item in attachments
+        if isinstance(item, Mapping)
+        for description in [_attachment_description(item)]
+        if description
+    ]
+    return "\n".join(f"- {description}" for description in descriptions) or None
+
+
+def _context_message(
+    text: str,
+    ladder: Any,
+    cwd: Any,
+    profile: str | None,
+    attachments: Any = None,
+    session_history: Any = None,
+) -> str:
     parts = [f"Today: {_datetime.date.today().isoformat()}"]
     project = _project_context(cwd)
     if project:
         parts.append(project)
     parts.extend(_memory_context(profile))
+    history = _render_session_history(session_history)
+    if history:
+        parts.append(f"Prior conversation context:\n{history}")
+    attachments_text = _render_attachments(attachments)
+    if attachments_text:
+        parts.append(f"Attached media/files:\n{attachments_text}")
     parts.append(f"Original intent:\n{text.strip()}")
     rungs = _rungs(ladder)
     if rungs:
@@ -298,18 +360,33 @@ def _context_message(text: str, ladder: Any, cwd: Any, profile: str | None) -> s
     return "\n\n".join(parts)
 
 
-def build_interrogate_messages(text: str, ladder: Any = None, cwd: Any = None, profile: str | None = None, force: bool = False) -> list[dict[str, str]]:
+def build_interrogate_messages(
+    text: str,
+    ladder: Any = None,
+    cwd: Any = None,
+    profile: str | None = None,
+    force: bool = False,
+    attachments: Any = None,
+    session_history: Any = None,
+) -> list[dict[str, str]]:
     instruction = "Return the next frontier decision." if not force else "The user forced another rung. Return a question, never done=true."
     return [
         {"role": "system", "content": _INTERROGATE_SYSTEM},
-        {"role": "user", "content": f"{_context_message(text, ladder, cwd, profile)}\n\n{instruction}"},
+        {"role": "user", "content": f"{_context_message(text, ladder, cwd, profile, attachments, session_history)}\n\n{instruction}"},
     ]
 
 
-def build_brief_messages(text: str, ladder: Any = None, cwd: Any = None, profile: str | None = None) -> list[dict[str, str]]:
+def build_brief_messages(
+    text: str,
+    ladder: Any = None,
+    cwd: Any = None,
+    profile: str | None = None,
+    attachments: Any = None,
+    session_history: Any = None,
+) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": _BRIEF_SYSTEM},
-        {"role": "user", "content": _context_message(text, ladder, cwd, profile)},
+        {"role": "user", "content": _context_message(text, ladder, cwd, profile, attachments, session_history)},
     ]
 
 
@@ -408,11 +485,18 @@ def _invoke(
     return str(result or ""), get_model_label()
 
 
-def local_template_brief(text: str, ladder: Any = None) -> str:
+def local_template_brief(text: str, ladder: Any = None, attachments: Any = None, session_history: Any = None) -> str:
     """Deterministic local brief that records only known inputs and explicit assumptions."""
     rungs = _rungs(ladder)
     decisions = [f"- {r['category'] or 'Decision'}: {r['answer']}" for r in rungs if r["answer"]]
     known = "\n".join(decisions) or "- No decisions were settled before launch."
+    context_notes: list[str] = []
+    attachments_text = _render_attachments(attachments)
+    if attachments_text:
+        context_notes.append(f"Attached media/files to analyze:\n{attachments_text}")
+    if _render_session_history(session_history):
+        context_notes.append("Prior conversation context was provided and should guide the work.")
+    constraints = "\n".join(f"- {note}" for note in context_notes) or "- None stated."
     return f"""## Goal
 {text.strip() or 'Produce the requested outcome.'}
 
@@ -429,7 +513,7 @@ def local_template_brief(text: str, ladder: Any = None) -> str:
 {known}
 
 ## Constraints
-- None stated.
+{constraints}
 
 ## Verify before reporting done
 - Check the deliverable against the stated success criteria.
@@ -454,7 +538,15 @@ def interrogate(payload: Mapping[str, Any], llm: Callable[..., Any] | None = Non
         else:
             raw, model = _invoke(
                 llm,
-                build_interrogate_messages(text, data.get("ladder"), data.get("cwd"), _clean_text(data.get("profile")) or None, force),
+                build_interrogate_messages(
+                    text,
+                    data.get("ladder"),
+                    data.get("cwd"),
+                    _clean_text(data.get("profile")) or None,
+                    force,
+                    data.get("attachments"),
+                    data.get("session_history"),
+                ),
                 max_tokens=_INTERROGATE_MAX_TOKENS,
                 timeout=_INTERROGATE_TIMEOUT,
                 is_json=True,
@@ -481,7 +573,14 @@ def brief(payload: Mapping[str, Any], llm: Callable[..., Any] | None = None) -> 
             raise ValueError("empty intent")
         raw, model = _invoke(
             llm,
-            build_brief_messages(text, data.get("ladder"), data.get("cwd"), _clean_text(data.get("profile")) or None),
+            build_brief_messages(
+                text,
+                data.get("ladder"),
+                data.get("cwd"),
+                _clean_text(data.get("profile")) or None,
+                data.get("attachments"),
+                data.get("session_history"),
+            ),
             max_tokens=_BRIEF_MAX_TOKENS,
             timeout=_BRIEF_TIMEOUT,
             is_json=False,
@@ -491,5 +590,13 @@ def brief(payload: Mapping[str, Any], llm: Callable[..., Any] | None = None) -> 
             raise ValueError("unusable brief")
         result = {"brief": parsed, "source": "model"}
     except Exception:
-        result = {"brief": local_template_brief(text, data.get("ladder")), "source": "template"}
+        result = {
+            "brief": local_template_brief(
+                text,
+                data.get("ladder"),
+                data.get("attachments"),
+                data.get("session_history"),
+            ),
+            "source": "template",
+        }
     return {**result, "latency_ms": max(0, int((time.monotonic() - started) * 1000)), "model": model}
