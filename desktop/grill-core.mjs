@@ -60,18 +60,6 @@ export function reduceGrill(state, action) {
         sessionHistory: Array.isArray(action.sessionHistory) ? action.sessionHistory : [],
         status: 'asking'
       }
-    case 'ATTACH_MEDIA': {
-      const attachments = Array.isArray(action.attachments) ? action.attachments.filter(Boolean) : []
-      return attachments.length ? { ...state, attachments: [...state.attachments, ...attachments] } : state
-    }
-    case 'REMOVE_ATTACHMENT': {
-      const index = Number.isInteger(action.index)
-        ? action.index
-        : state.attachments.findIndex(attachment => attachment?.id === action.id)
-      return index >= 0 && index < state.attachments.length
-        ? { ...state, attachments: state.attachments.filter((_, attachmentIndex) => attachmentIndex !== index) }
-        : state
-    }
     case 'SET_SESSION_HISTORY':
       return { ...state, sessionHistory: Array.isArray(action.sessionHistory) ? action.sessionHistory : [] }
     case 'SET_ANSWER':

@@ -350,30 +350,39 @@ test('fallback brief carries captured intent and settled directives without inve
   )
 })
 
-test('media attachments append, remove by id or index, and survive the grilling lifecycle', () => {
+test('initial composer attachments survive the grilling lifecycle and cannot change per question', () => {
   const screenshot = { id: 'screen-1', kind: 'image', name: 'screen.png', data_url: 'data:image/png;base64,AA==', size: 2 }
   const notes = { id: 'notes-1', kind: 'file', name: 'notes.txt', content: 'Keep the current navigation.', size: 28 }
   let state = reduceGrill(initialGrillState(), { type: 'START', attachments: [screenshot], intent: 'Refine the desktop plugin' })
-  state = reduceGrill(state, { type: 'ATTACH_MEDIA', attachments: [notes] })
-  assert.deepEqual(state.attachments, [screenshot, notes])
-
-  state = reduceGrill(state, { type: 'REMOVE_ATTACHMENT', id: screenshot.id })
-  assert.deepEqual(state.attachments, [notes])
-  state = reduceGrill(state, { type: 'ATTACH_MEDIA', attachments: [screenshot] })
-  state = reduceGrill(state, { type: 'REMOVE_ATTACHMENT', index: 0 })
   assert.deepEqual(state.attachments, [screenshot])
+
+  state = reduceGrill(state, { type: 'ATTACH_MEDIA', attachments: [notes] })
+  assert.deepEqual(state.attachments, [screenshot], 'per-question attachment actions must not change initial composer context')
+  state = reduceGrill(state, { type: 'REMOVE_ATTACHMENT', id: screenshot.id })
+  assert.deepEqual(state.attachments, [screenshot], 'per-question removal must not change initial composer context')
 
   state = reduceGrill(state, { type: 'INTERROGATION', response: { done: true } })
   state = reduceGrill(state, { type: 'WRITE_BRIEF' })
   assert.equal(state.status, 'briefing')
-  assert.deepEqual(state.attachments, [screenshot], 'brief requests retain the composer attachment payload')
+  assert.deepEqual(state.attachments, [screenshot], 'brief requests retain the initial composer attachment payload')
+})
+
+test('plugin exposes no per-question media attachment controls', async () => {
+  const plugin = await readFile(new URL('../../desktop/plugin.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(plugin, /function AttachmentControls/)
+  assert.doesNotMatch(plugin, /data-grill-attach-media/)
+  assert.doesNotMatch(plugin, /data-grill-attachment-input/)
+  assert.doesNotMatch(plugin, /onDragOver:/)
+  assert.doesNotMatch(plugin, /onDrop:/)
+  assert.doesNotMatch(plugin, /onPaste:/)
+  assert.doesNotMatch(plugin, /serializeAttachments/)
 })
 
 test('brief placement forwards the unchanged attachment payload to the composer adapter', async () => {
   const plugin = await readFile(new URL('../../desktop/plugin.js', import.meta.url), 'utf8')
   assert.match(plugin, /attachments: requestState\.attachments/)
   assert.match(plugin, /composerAdapter\.forwardAttachments\(requestState\.attachments\)/)
-  assert.match(plugin, /\$composerAttachments\?\.set \? \$composerAttachments : host\.state\?\.composerAttachments/)
+  assert.match(plugin, /forwardAttachments\(attachments\) \{/)
 })
 
 test('START and SET_SESSION_HISTORY preserve injected prior conversation context', () => {

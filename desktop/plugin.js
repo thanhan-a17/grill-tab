@@ -1,6 +1,4 @@
 import {
-  $composerAttachments,
-  $messages,
   atom,
   COMPOSER_AREAS,
   CopyButton,
@@ -81,18 +79,6 @@ export function reduceGrill(state, action) {
         sessionHistory: Array.isArray(action.sessionHistory) ? action.sessionHistory : [],
         status: 'asking'
       }
-    case 'ATTACH_MEDIA': {
-      const attachments = Array.isArray(action.attachments) ? action.attachments.filter(Boolean) : []
-      return attachments.length ? { ...state, attachments: [...state.attachments, ...attachments] } : state
-    }
-    case 'REMOVE_ATTACHMENT': {
-      const index = Number.isInteger(action.index)
-        ? action.index
-        : state.attachments.findIndex(attachment => attachment?.id === action.id)
-      return index >= 0 && index < state.attachments.length
-        ? { ...state, attachments: state.attachments.filter((_, attachmentIndex) => attachmentIndex !== index) }
-        : state
-    }
     case 'SET_SESSION_HISTORY':
       return { ...state, sessionHistory: Array.isArray(action.sessionHistory) ? action.sessionHistory : [] }
     case 'SET_ANSWER':
@@ -273,7 +259,7 @@ const composerAdapter = {
   },
 
   readAttachments() {
-    const attachmentState = $composerAttachments?.get?.() ?? host.state?.composerAttachments?.get?.()
+    const attachmentState = host.state?.composerAttachments?.get?.() ?? globalThis.__HERMES_PLUGIN_SDK__?.$composerAttachments?.get?.()
     if (Array.isArray(attachmentState)) return attachmentState
     const root = this.getRoot() || document
     return [...root.querySelectorAll('[data-slot="composer-attachments"] [data-attachment], [data-slot="composer-attachments"] > *')]
@@ -293,13 +279,13 @@ const composerAdapter = {
 
   forwardAttachments(attachments) {
     const payload = Array.isArray(attachments) ? attachments : []
-    const attachmentState = $composerAttachments?.set ? $composerAttachments : host.state?.composerAttachments
+    const attachmentState = host.state?.composerAttachments ?? globalThis.__HERMES_PLUGIN_SDK__?.$composerAttachments
     if (attachmentState?.set) attachmentState.set(payload)
     return payload
   },
 
   readSessionHistory() {
-    const messages = host.state?.messages?.get?.() ?? $messages?.get?.()
+    const messages = host.state?.messages?.get?.() ?? globalThis.__HERMES_PLUGIN_SDK__?.$messages?.get?.()
     if (Array.isArray(messages)) {
       return messages
         .map(message => ({ role: message?.role, content: message?.content ?? message?.text ?? '' }))
@@ -642,86 +628,6 @@ function CurrentQuestion({ number, text }) {
   })
 }
 
-function readFile(file, mode) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(reader.error || new Error(`Could not read ${file.name}`))
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
-    if (mode === 'data-url') reader.readAsDataURL(file)
-    else reader.readAsText(file)
-  })
-}
-
-async function serializeAttachments(files) {
-  return Promise.all([...files].map(async (file, index) => {
-    const kind = file.type.startsWith('image/') ? 'image' : 'file'
-    return {
-      content: kind === 'file' && file.type.startsWith('text/') ? await readFile(file, 'text') : undefined,
-      data_url: kind === 'image' ? await readFile(file, 'data-url') : undefined,
-      id: globalThis.crypto?.randomUUID?.() || `${file.name}-${file.size}-${Date.now()}-${index}`,
-      kind,
-      name: file.name,
-      size: file.size
-    }
-  }))
-}
-
-function AttachmentControls({ attachments }) {
-  const fileInputRef = useRef(null)
-  const attach = async files => {
-    if (!files?.length) return
-    try {
-      update({ type: 'ATTACH_MEDIA', attachments: await serializeAttachments(files) })
-    } catch (error) {
-      host.notifyError(error, 'Could not attach that file.')
-    }
-  }
-  return jsxs('div', {
-    'data-grill-attachments': true,
-    style: { ...typeStyle, display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '10px' },
-    children: [
-      jsx('input', {
-        'aria-label': 'Attach media to Grill',
-        'data-grill-attachment-input': true,
-        multiple: true,
-        onChange: event => {
-          void attach(event.currentTarget.files)
-          event.currentTarget.value = ''
-        },
-        ref: fileInputRef,
-        style: { display: 'none' },
-        type: 'file'
-      }),
-      jsx('button', {
-        'data-grill-attach-media': true,
-        onClick: () => fileInputRef.current?.click(),
-        style: { ...typeStyle, background: 'transparent', border: '1px solid var(--ui-stroke-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', lineHeight: '18px', padding: '1px 7px' },
-        type: 'button',
-        children: 'Attach media'
-      }),
-      ...attachments.map((attachment, index) => jsxs('span', {
-        'data-grill-attachment-chip': true,
-        key: attachment.id || `${attachment.name}-${index}`,
-        style: { alignItems: 'center', border: '1px solid var(--ui-stroke-secondary)', borderRadius: '6px', display: 'inline-flex', gap: '5px', maxWidth: '100%', padding: '2px 5px' },
-        children: [
-          attachment.kind === 'image' && attachment.data_url
-            ? jsx('img', { alt: '', src: attachment.data_url, style: { height: '18px', objectFit: 'cover', width: '18px' } })
-            : jsx('span', { 'aria-hidden': true, style: { ...monoStyle, fontSize: '10px' }, children: 'FILE' }),
-          jsx('span', { title: attachment.name, style: { fontSize: '11px', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: attachment.name }),
-          attachment.size ? jsx('span', { style: { ...monoStyle, fontSize: '10px' }, children: `${attachment.size} B` }) : null,
-          jsx('button', {
-            'aria-label': `Remove ${attachment.name}`,
-            onClick: () => update({ type: 'REMOVE_ATTACHMENT', id: attachment.id, index }),
-            style: { ...typeStyle, background: 'transparent', border: 0, cursor: 'pointer', fontSize: '15px', lineHeight: '14px', padding: 0 },
-            type: 'button',
-            children: '×'
-          })
-        ]
-      }))
-    ]
-  })
-}
-
 function ActiveQuestion({ state }) {
   const current = state.current
   const nextNumber = state.ladder.length + 1
@@ -774,14 +680,6 @@ function ActiveQuestion({ state }) {
             else restoreIntentAndReset()
           }
         },
-        onPaste: event => {
-          const files = event.clipboardData?.files
-          if (!files?.length) return
-          event.preventDefault()
-          void serializeAttachments(files)
-            .then(attachments => update({ type: 'ATTACH_MEDIA', attachments }))
-            .catch(error => host.notifyError(error, 'Could not attach pasted media.'))
-        },
         placeholder: current.recommended ? `recommended: ${current.recommended}` : 'Answer this decision',
         style: {
           ...typeStyle,
@@ -799,7 +697,6 @@ function ActiveQuestion({ state }) {
         },
         value: state.answer
       }),
-      jsx(AttachmentControls, { attachments: state.attachments }),
       options.length
         ? jsx('div', {
             'data-grill': 'chips',
@@ -832,7 +729,6 @@ function DoneRow({ state }) {
     style: { marginTop: '16px' },
     children: [
       jsx(CurrentQuestion, { number: state.ladder.length + 1, text: 'Nothing critical left.' }),
-      jsx(AttachmentControls, { attachments: state.attachments }),
       jsx('button', {
         ref,
                     onKeyDown: event => {
@@ -944,17 +840,6 @@ function GrillLadder() {
 
   return jsxs('div', {
     'data-grill-strip': true,
-    onDragOver: event => {
-      if (!state.finalized && event.dataTransfer?.files?.length) event.preventDefault()
-    },
-    onDrop: event => {
-      const files = event.dataTransfer?.files
-      if (state.finalized || !files?.length) return
-      event.preventDefault()
-      void serializeAttachments(files)
-        .then(attachments => update({ type: 'ATTACH_MEDIA', attachments }))
-        .catch(error => host.notifyError(error, 'Could not attach dropped media.'))
-    },
     style: { padding: '0 0 8px' },
     children: [
       jsx(GrillMotionStyles, {}),
