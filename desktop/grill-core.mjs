@@ -1,6 +1,7 @@
 export function initialGrillState() {
   return {
     answer: '',
+    attachments: [],
     brief: '',
     current: null,
     escapeArmed: false,
@@ -11,6 +12,7 @@ export function initialGrillState() {
     restoreIntent: '',
     editingIndex: null,
     finalized: false,
+    sessionHistory: [],
     status: 'idle'
   }
 }
@@ -53,9 +55,25 @@ export function reduceGrill(state, action) {
     case 'START':
       return {
         ...initialGrillState(),
+        attachments: Array.isArray(action.attachments) ? action.attachments : [],
         intent: action.intent,
+        sessionHistory: Array.isArray(action.sessionHistory) ? action.sessionHistory : [],
         status: 'asking'
       }
+    case 'ATTACH_MEDIA': {
+      const attachments = Array.isArray(action.attachments) ? action.attachments.filter(Boolean) : []
+      return attachments.length ? { ...state, attachments: [...state.attachments, ...attachments] } : state
+    }
+    case 'REMOVE_ATTACHMENT': {
+      const index = Number.isInteger(action.index)
+        ? action.index
+        : state.attachments.findIndex(attachment => attachment?.id === action.id)
+      return index >= 0 && index < state.attachments.length
+        ? { ...state, attachments: state.attachments.filter((_, attachmentIndex) => attachmentIndex !== index) }
+        : state
+    }
+    case 'SET_SESSION_HISTORY':
+      return { ...state, sessionHistory: Array.isArray(action.sessionHistory) ? action.sessionHistory : [] }
     case 'SET_ANSWER':
       return state.status === 'active' ? { ...state, answer: action.answer, escapeArmed: false } : state
     case 'COMMIT_ANSWER': {

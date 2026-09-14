@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import { fallbackBrief, initialGrillState, reduceGrill, shouldStartFromTab } from '../../desktop/grill-core.mjs'
@@ -347,4 +348,44 @@ test('fallback brief carries captured intent and settled directives without inve
     brief,
     '## Goal\nImplement the desktop half\n\n## Settled decisions\n- Deliverable — What should land?: Drop-in plugin\n\n## Assumptions to make explicitly (do not ask)\n- None captured in the ladder.\n\n## Directive\nWork autonomously. Do not re-ask anything above. Ask only if blocked by something outside this brief.'
   )
+})
+
+test('media attachments append, remove by id or index, and survive the grilling lifecycle', () => {
+  const screenshot = { id: 'screen-1', kind: 'image', name: 'screen.png', data_url: 'data:image/png;base64,AA==', size: 2 }
+  const notes = { id: 'notes-1', kind: 'file', name: 'notes.txt', content: 'Keep the current navigation.', size: 28 }
+  let state = reduceGrill(initialGrillState(), { type: 'START', attachments: [screenshot], intent: 'Refine the desktop plugin' })
+  state = reduceGrill(state, { type: 'ATTACH_MEDIA', attachments: [notes] })
+  assert.deepEqual(state.attachments, [screenshot, notes])
+
+  state = reduceGrill(state, { type: 'REMOVE_ATTACHMENT', id: screenshot.id })
+  assert.deepEqual(state.attachments, [notes])
+  state = reduceGrill(state, { type: 'ATTACH_MEDIA', attachments: [screenshot] })
+  state = reduceGrill(state, { type: 'REMOVE_ATTACHMENT', index: 0 })
+  assert.deepEqual(state.attachments, [screenshot])
+
+  state = reduceGrill(state, { type: 'INTERROGATION', response: { done: true } })
+  state = reduceGrill(state, { type: 'WRITE_BRIEF' })
+  assert.equal(state.status, 'briefing')
+  assert.deepEqual(state.attachments, [screenshot], 'brief requests retain the composer attachment payload')
+})
+
+test('brief placement forwards the unchanged attachment payload to the composer adapter', async () => {
+  const plugin = await readFile(new URL('../../desktop/plugin.js', import.meta.url), 'utf8')
+  assert.match(plugin, /attachments: requestState\.attachments/)
+  assert.match(plugin, /composerAdapter\.forwardAttachments\(requestState\.attachments\)/)
+  assert.match(plugin, /\$composerAttachments\?\.set \? \$composerAttachments : host\.state\?\.composerAttachments/)
+})
+
+test('START and SET_SESSION_HISTORY preserve injected prior conversation context', () => {
+  const history = [
+    { role: 'user', content: 'The existing flow is intentionally keyboard-first.' },
+    { role: 'assistant', content: 'I will keep the main composer behavior intact.' }
+  ]
+  let state = reduceGrill(initialGrillState(), { type: 'START', intent: 'Add media support', sessionHistory: history })
+  assert.deepEqual(state.sessionHistory, history)
+
+  const replacement = [{ role: 'user', content: 'Also include the attached screenshot.' }]
+  state = reduceGrill(state, { type: 'SET_SESSION_HISTORY', sessionHistory: replacement })
+  assert.deepEqual(state.sessionHistory, replacement)
+  assert.deepEqual(reduceGrill(state, { type: 'SET_SESSION_HISTORY', sessionHistory: null }).sessionHistory, [])
 })

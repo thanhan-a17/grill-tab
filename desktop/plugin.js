@@ -1,4 +1,6 @@
 import {
+  $composerAttachments,
+  $messages,
   atom,
   COMPOSER_AREAS,
   CopyButton,
@@ -20,6 +22,7 @@ const ID = 'grill-tab'
 export function initialGrillState() {
   return {
     answer: '',
+    attachments: [],
     brief: '',
     current: null,
     escapeArmed: false,
@@ -30,6 +33,7 @@ export function initialGrillState() {
     restoreIntent: '',
     editingIndex: null,
     finalized: false,
+    sessionHistory: [],
     status: 'idle'
   }
 }
@@ -72,9 +76,25 @@ export function reduceGrill(state, action) {
     case 'START':
       return {
         ...initialGrillState(),
+        attachments: Array.isArray(action.attachments) ? action.attachments : [],
         intent: action.intent,
+        sessionHistory: Array.isArray(action.sessionHistory) ? action.sessionHistory : [],
         status: 'asking'
       }
+    case 'ATTACH_MEDIA': {
+      const attachments = Array.isArray(action.attachments) ? action.attachments.filter(Boolean) : []
+      return attachments.length ? { ...state, attachments: [...state.attachments, ...attachments] } : state
+    }
+    case 'REMOVE_ATTACHMENT': {
+      const index = Number.isInteger(action.index)
+        ? action.index
+        : state.attachments.findIndex(attachment => attachment?.id === action.id)
+      return index >= 0 && index < state.attachments.length
+        ? { ...state, attachments: state.attachments.filter((_, attachmentIndex) => attachmentIndex !== index) }
+        : state
+    }
+    case 'SET_SESSION_HISTORY':
+      return { ...state, sessionHistory: Array.isArray(action.sessionHistory) ? action.sessionHistory : [] }
     case 'SET_ANSWER':
       return state.status === 'active' ? { ...state, answer: action.answer, escapeArmed: false } : state
     case 'COMMIT_ANSWER': {
@@ -252,6 +272,48 @@ const composerAdapter = {
     return true
   },
 
+  readAttachments() {
+    const attachmentState = $composerAttachments?.get?.() ?? host.state?.composerAttachments?.get?.()
+    if (Array.isArray(attachmentState)) return attachmentState
+    const root = this.getRoot() || document
+    return [...root.querySelectorAll('[data-slot="composer-attachments"] [data-attachment], [data-slot="composer-attachments"] > *')]
+      .map((element, index) => {
+        const image = element.querySelector?.('img')
+        const name = element.getAttribute?.('data-name') || image?.getAttribute('alt') || element.textContent?.trim() || `Attachment ${index + 1}`
+        return {
+          id: element.getAttribute?.('data-id') || `${name}-${index}`,
+          kind: image ? 'image' : 'file',
+          name,
+          data_url: image?.getAttribute('src') || undefined,
+          path: element.getAttribute?.('data-path') || undefined,
+          size: Number(element.getAttribute?.('data-size')) || undefined
+        }
+      })
+  },
+
+  forwardAttachments(attachments) {
+    const payload = Array.isArray(attachments) ? attachments : []
+    const attachmentState = $composerAttachments?.set ? $composerAttachments : host.state?.composerAttachments
+    if (attachmentState?.set) attachmentState.set(payload)
+    return payload
+  },
+
+  readSessionHistory() {
+    const messages = host.state?.messages?.get?.() ?? $messages?.get?.()
+    if (Array.isArray(messages)) {
+      return messages
+        .map(message => ({ role: message?.role, content: message?.content ?? message?.text ?? '' }))
+        .filter(message => ['user', 'assistant', 'system'].includes(message.role) && String(message.content).trim())
+        .map(message => ({ ...message, content: String(message.content) }))
+    }
+    return [...document.querySelectorAll('[data-slot="aui_user-message-root"], [data-slot="aui_assistant-message-content"]')]
+      .map(element => ({
+        role: element.matches('[data-slot="aui_user-message-root"]') ? 'user' : 'assistant',
+        content: element.textContent?.trim() || ''
+      }))
+      .filter(message => message.content)
+  },
+
   isPopoverOpen() {
     const root = this.getRoot()
     // trigger-popover.tsx:154-162 marks an open completion drawer as listbox with this slot/state pair.
@@ -313,10 +375,12 @@ async function askNext() {
     const response = await pluginContext.rest('/interrogate', {
       method: 'POST',
       body: {
+        attachments: state.attachments,
         cwd: host.state.cwd.get() ?? null,
         force: Boolean(state.force),
         ladder: contractLadder(state.ladder),
         profile: host.state.profile.get() ?? null,
+        session_history: state.sessionHistory,
         text: state.intent
       }
     })
@@ -333,11 +397,13 @@ function startFromComposer() {
   const state = $grill.get()
   const intent = composerAdapter.readDraft().trim()
   if (state.status !== 'idle' || !intent) return
+  const attachments = composerAdapter.readAttachments()
+  const sessionHistory = composerAdapter.readSessionHistory()
   if (!composerAdapter.writeDraft('')) {
     host.notify({ kind: 'error', message: 'Could not clear the composer for grilling.' })
     return
   }
-  update({ type: 'START', intent })
+  update({ type: 'START', attachments, intent, sessionHistory })
   void askNext()
 }
 
@@ -364,9 +430,11 @@ async function writeBrief() {
     const response = await pluginContext.rest('/brief', {
       method: 'POST',
       body: {
+        attachments: requestState.attachments,
         cwd: host.state.cwd.get() ?? null,
         ladder: contractLadder(requestState.ladder),
         profile: host.state.profile.get() ?? null,
+        session_history: requestState.sessionHistory,
         text: requestState.intent
       }
     })
@@ -376,6 +444,7 @@ async function writeBrief() {
       : fallbackBrief(requestState.intent, requestState.ladder)
     update({ type: 'BRIEF_READY', brief })
     if (!composerAdapter.writeDraft(brief)) host.notify({ kind: 'error', message: 'Could not write the brief into the composer.' })
+    composerAdapter.forwardAttachments(requestState.attachments)
     update({ type: 'RESET' })
   } catch (error) {
     if (serial !== requestSerial) return
@@ -383,6 +452,7 @@ async function writeBrief() {
     const brief = fallbackBrief(requestState.intent, requestState.ladder)
     update({ type: 'BRIEF_READY', brief })
     if (!composerAdapter.writeDraft(brief)) host.notify({ kind: 'error', message: 'Could not write the brief into the composer.' })
+    composerAdapter.forwardAttachments(requestState.attachments)
     update({ type: 'RESET' })
   }
 }
@@ -520,6 +590,7 @@ function Ladder({ ladder, editingIndex, canEdit }) {
       ? jsx(CheckpointEditor, { index, key: `${rung.question}-${index}`, rung })
       : jsxs('button', {
           'aria-disabled': !canEdit,
+          className: 'grill-rung-enter',
           'data-grill': 'rung',
           'data-grill-rung': true,
           disabled: !canEdit,
@@ -560,12 +631,93 @@ function Ladder({ ladder, editingIndex, canEdit }) {
 
 function CurrentQuestion({ number, text }) {
   return jsxs('div', {
+    className: 'grill-question-enter',
     'data-grill': 'question',
     'data-grill-current-question': true,
     style: { alignItems: 'baseline', display: 'grid', gridTemplateColumns: '20px minmax(0, 1fr)', lineHeight: '20px' },
     children: [
       jsx('span', { 'data-grill-current-number': true, style: { ...monoStyle, fontSize: '12px' }, children: String(number).padStart(2, '0') }),
       jsx('span', { 'data-grill-current-text': true, style: { color: 'var(--ui-text-primary, inherit)', fontFamily: 'var(--dt-font-sans, inherit)', fontSize: '14px', fontWeight: 500 }, children: text })
+    ]
+  })
+}
+
+function readFile(file, mode) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error || new Error(`Could not read ${file.name}`))
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    if (mode === 'data-url') reader.readAsDataURL(file)
+    else reader.readAsText(file)
+  })
+}
+
+async function serializeAttachments(files) {
+  return Promise.all([...files].map(async (file, index) => {
+    const kind = file.type.startsWith('image/') ? 'image' : 'file'
+    return {
+      content: kind === 'file' && file.type.startsWith('text/') ? await readFile(file, 'text') : undefined,
+      data_url: kind === 'image' ? await readFile(file, 'data-url') : undefined,
+      id: globalThis.crypto?.randomUUID?.() || `${file.name}-${file.size}-${Date.now()}-${index}`,
+      kind,
+      name: file.name,
+      size: file.size
+    }
+  }))
+}
+
+function AttachmentControls({ attachments }) {
+  const fileInputRef = useRef(null)
+  const attach = async files => {
+    if (!files?.length) return
+    try {
+      update({ type: 'ATTACH_MEDIA', attachments: await serializeAttachments(files) })
+    } catch (error) {
+      host.notifyError(error, 'Could not attach that file.')
+    }
+  }
+  return jsxs('div', {
+    'data-grill-attachments': true,
+    style: { ...typeStyle, display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '10px' },
+    children: [
+      jsx('input', {
+        'aria-label': 'Attach media to Grill',
+        'data-grill-attachment-input': true,
+        multiple: true,
+        onChange: event => {
+          void attach(event.currentTarget.files)
+          event.currentTarget.value = ''
+        },
+        ref: fileInputRef,
+        style: { display: 'none' },
+        type: 'file'
+      }),
+      jsx('button', {
+        'data-grill-attach-media': true,
+        onClick: () => fileInputRef.current?.click(),
+        style: { ...typeStyle, background: 'transparent', border: '1px solid var(--ui-stroke-secondary)', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', lineHeight: '18px', padding: '1px 7px' },
+        type: 'button',
+        children: 'Attach media'
+      }),
+      ...attachments.map((attachment, index) => jsxs('span', {
+        'data-grill-attachment-chip': true,
+        key: attachment.id || `${attachment.name}-${index}`,
+        style: { alignItems: 'center', border: '1px solid var(--ui-stroke-secondary)', borderRadius: '6px', display: 'inline-flex', gap: '5px', maxWidth: '100%', padding: '2px 5px' },
+        children: [
+          attachment.kind === 'image' && attachment.data_url
+            ? jsx('img', { alt: '', src: attachment.data_url, style: { height: '18px', objectFit: 'cover', width: '18px' } })
+            : jsx('span', { 'aria-hidden': true, style: { ...monoStyle, fontSize: '10px' }, children: 'FILE' }),
+          jsx('span', { title: attachment.name, style: { fontSize: '11px', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, children: attachment.name }),
+          attachment.size ? jsx('span', { style: { ...monoStyle, fontSize: '10px' }, children: `${attachment.size} B` }) : null,
+          jsx('button', {
+            'aria-label': `Remove ${attachment.name}`,
+            onClick: () => update({ type: 'REMOVE_ATTACHMENT', id: attachment.id, index }),
+            style: { ...typeStyle, background: 'transparent', border: 0, cursor: 'pointer', fontSize: '15px', lineHeight: '14px', padding: 0 },
+            type: 'button',
+            children: '×'
+          })
+        ]
+      }))
     ]
   })
 }
@@ -593,7 +745,7 @@ function ActiveQuestion({ state }) {
   return jsxs('div', {
     style: { marginTop: '16px' },
     children: [
-      jsx(CurrentQuestion, { number: nextNumber, text: current.question }),
+      jsx(CurrentQuestion, { key: `${nextNumber}-${current.question}`, number: nextNumber, text: current.question }),
       jsx('input', {
         'aria-label': 'Grill answer',
         'data-grill': 'input',
@@ -622,6 +774,14 @@ function ActiveQuestion({ state }) {
             else restoreIntentAndReset()
           }
         },
+        onPaste: event => {
+          const files = event.clipboardData?.files
+          if (!files?.length) return
+          event.preventDefault()
+          void serializeAttachments(files)
+            .then(attachments => update({ type: 'ATTACH_MEDIA', attachments }))
+            .catch(error => host.notifyError(error, 'Could not attach pasted media.'))
+        },
         placeholder: current.recommended ? `recommended: ${current.recommended}` : 'Answer this decision',
         style: {
           ...typeStyle,
@@ -639,6 +799,7 @@ function ActiveQuestion({ state }) {
         },
         value: state.answer
       }),
+      jsx(AttachmentControls, { attachments: state.attachments }),
       options.length
         ? jsx('div', {
             'data-grill': 'chips',
@@ -671,6 +832,7 @@ function DoneRow({ state }) {
     style: { marginTop: '16px' },
     children: [
       jsx(CurrentQuestion, { number: state.ladder.length + 1, text: 'Nothing critical left.' }),
+      jsx(AttachmentControls, { attachments: state.attachments }),
       jsx('button', {
         ref,
                     onKeyDown: event => {
@@ -705,6 +867,7 @@ function Preview({ state }) {
   }, [])
   return jsxs('div', {
     ref,
+    className: 'grill-brief-reveal',
     'data-grill': 'preview',
     onKeyDown: event => {
       if (event.key === 'Enter' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
@@ -750,6 +913,20 @@ function LoadingRow({ children }) {
   })
 }
 
+function GrillMotionStyles() {
+  return jsx('style', {
+    children: `
+      @keyframes grillFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes grillRungEnter { from { opacity: 0; transform: translateY(6px); } to { opacity: ${PAST_OPACITY}; transform: translateY(0); } }
+      @keyframes grillBriefReveal { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+      .grill-question-enter { animation: grillFadeIn 180ms cubic-bezier(.22,.8,.2,1) both; }
+      .grill-rung-enter { animation: grillRungEnter 220ms cubic-bezier(.22,.8,.2,1) both; }
+      .grill-brief-reveal { animation: grillBriefReveal 260ms cubic-bezier(.22,.8,.2,1) both; }
+      @media (prefers-reduced-motion: reduce) { .grill-question-enter, .grill-rung-enter, .grill-brief-reveal { animation-duration: 1ms; } }
+    `
+  })
+}
+
 function GrillLadder() {
   const state = useValue($grill)
   if (state.status === 'idle') return null
@@ -767,8 +944,20 @@ function GrillLadder() {
 
   return jsxs('div', {
     'data-grill-strip': true,
+    onDragOver: event => {
+      if (!state.finalized && event.dataTransfer?.files?.length) event.preventDefault()
+    },
+    onDrop: event => {
+      const files = event.dataTransfer?.files
+      if (state.finalized || !files?.length) return
+      event.preventDefault()
+      void serializeAttachments(files)
+        .then(attachments => update({ type: 'ATTACH_MEDIA', attachments }))
+        .catch(error => host.notifyError(error, 'Could not attach dropped media.'))
+    },
     style: { padding: '0 0 8px' },
     children: [
+      jsx(GrillMotionStyles, {}),
       jsxs('div', {
         'data-grill': 'header',
         'data-grill-intent-row': true,
