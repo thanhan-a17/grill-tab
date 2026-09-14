@@ -13,16 +13,25 @@ Designed for general agentic work (research, content, ops, code), not just dev.
 ## Install
 
 ```bash
-git clone <this repo> ~/projects/grill-tab
-~/projects/grill-tab/scripts/install.sh            # copy to ~/.hermes
-~/projects/grill-tab/scripts/install.sh ~/.hermes/profiles/<name>   # copy to a named profile
-~/projects/grill-tab/scripts/deploy.sh             # deploy all existing production homes + MacBook desktop plugin
+# One command (downloads a temporary clone, validates it, installs it, then cleans up)
+curl -fsSL https://raw.githubusercontent.com/thanhan-a17/grill-tab/main/install.sh | bash
+
+# Local clone
+./install.sh
+./install.sh --profile <name>
+./install.sh --home /path/to/hermes-home
 ```
 
-`install.sh` uses `rsync -a --delete` to copy the package; it never symlinks the working tree.
-`deploy.sh` installs the package into `~/.hermes` and every existing named profile that already
-contains grill-tab, then copies the desktop plugin to the MacBook over SSH. Production `~/.hermes`
-never contains symlinks into working trees; edit in `~/projects/grill-tab`, then run `scripts/deploy.sh`.
+The installer requires Python 3.12+ and Hermes 0.20.0+. Its **pre-flight** validates the plugin
+manifest and host Hermes version before creating or changing the target Hermes home. On failure it
+exits with code 1 and prints an `[ERROR]` explanation. After a successful pre-flight it copies the
+backend package to `plugins/grill-tab`, installs `desktop-plugins/grill-tab/plugin.js` plus its
+`.hermes-package.json`, enables `grill-tab` in `config.yaml`, and adds a default `auxiliary.grill`
+block when missing. It is safe to run again for upgrades.
+
+`HERMES_HOME` selects the default target; `--home` overrides it and `--profile name` targets
+`$HERMES_HOME/profiles/name`. Set `PYTHON_BIN` or `HERMES_BIN` when the compatible executables are
+not on `PATH`. The legacy `scripts/install.sh` delegates to the root installer.
 
 Then restart the desktop backend (quit/reopen Hermes Desktop) and, in Capabilities → Plugins,
 make sure **Grill Tab** is on. Recommended model (fast, good questions):
