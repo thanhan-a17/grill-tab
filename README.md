@@ -10,6 +10,10 @@ yourself to start the session.
 
 Designed for general agentic work (research, content, ops, code), not just dev.
 
+<p align="center">
+  <video src="https://github.com/thanhan-a17/grill-tab/raw/main/assets/Hermes4k.mp4" poster="assets/poster.png" controls="controls" width="100%"></video>
+</p>
+
 ## Install
 
 ```bash

@@ -22,7 +22,7 @@ def make_hermes(directory: Path, version: str) -> Path:
 
 def copy_repo(directory: Path) -> Path:
     destination = directory / "grill-tab"
-    shutil.copytree(REPO, destination, ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache"))
+    shutil.copytree(REPO, destination, ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "assets"))
     return destination
 
 
