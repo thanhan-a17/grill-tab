@@ -19,9 +19,9 @@ The `composerAdapter` object in `plugin.js` is the only plugin code permitted to
 - The DOM listener is document capture phase, but claims bare Tab only for an idle, non-empty composer rich input with no completion drawer. All other Tab behavior is untouched.
 - Every document listener is removed by `ctx.onDispose`.
 
-## Manual Director look-gate / smoke checklist (unverified here)
+## Manual verification / smoke checklist
 
-1. Install the file at `~/.hermes-dev/desktop-plugins/grill-tab/plugin.js`, then run **Reload desktop plugins** in the dev desktop.
+1. Install the file at `~/.hermes/desktop-plugins/grill-tab/plugin.js`, then run **Reload desktop plugins** in Hermes Desktop.
 2. Confirm no plugin-load error toast and the ladder strip is above the input, inside the composer box.
 3. Check the exact visual contract: one 12 px left/right inset; 20 px rung number column; 8 px vertical rhythm; no hard colors/backgrounds; rung questions single-line; answers right-aligned/truncated; answer hairline becomes accent on focus.
 4. Type `/` and open slash completion; Tab must select/continue the completion and never open Grill Tab. Repeat with `@` and emoji completion.

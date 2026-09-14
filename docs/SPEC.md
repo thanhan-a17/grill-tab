@@ -2,10 +2,9 @@
 
 Standalone Hermes plugin package. Press **Tab** in the desktop composer to interrogate a draft
 before it becomes the first message of a session; **Enter** synthesizes a high-quality brief and
-launches. Portable: one folder, no core patches. Supersedes the in-core fork in
-`~/projects/hermes-proto` (branch proto/spike; kept as reference only).
+launches. Portable: one folder, no core patches.
 
-## Decisions (settled with An, 2026-09-12)
+## Design decisions
 - Engine MAY declare the ladder done ("nothing critical left"); Enter still launches, Tab forces one more question.
 - Brief is SYNTHESIZED by the fast model at Enter (Goal/Success/Scope/Decisions/Verification), previewed before launch; local template is the fallback only.
 - **Enter never auto-sends.** From the preview, Enter PLACES the brief into the composer (ladder closes, caret at end); the user reviews and presses Enter themselves. Lower risk of shipping a prompt with something unwanted.
@@ -67,7 +66,7 @@ Brief synthesis prompt: produce ≤250 words markdown, sections exactly: `## Goa
 - Launch: `writeDraft(brief)` then `submit()`; then reset. If submit fails, leave the brief in the composer and toast.
 - Loading copy: asking → "Finding the next decision…", briefing → "Writing the brief…". Latency budget: rung ≤2 s p50, brief ≤4 s p50 with the fast model.
 
-### Visual contract (An owns the look-gate; workers implement exactly this)
+### Visual contract
 - ONE left gutter and ONE right inset for every row (header, rungs, question, input, hints): 12 px each, matched. No row hangs outside it.
 - Rung number column 20 px, fixed; question text starts at gutter+20 across all rungs.
 - Vertical rhythm on an 8 px grid: header→rungs 16, rung→rung 8, rungs→question 16, question→input 8, input→hints 8, hints→toolbar 12.
@@ -94,9 +93,9 @@ plugins:
 - First integration to fail: `submit()` via synthetic Enter (React may accept it; if not, the send-button click fallback must exist and be tested by hand).
 - Unsaid need: Tab must NEVER steal from slash/`@` completions or an empty composer; regression is unacceptable.
 - Second-order: `plugin_api.py` runs inside `hermes serve`; import errors there break the whole plugin mount — keep imports lazy and guarded; no core imports at module top beyond fastapi/pydantic.
-- Remote backends (MacBook over SSH): the desktop half must be installed on the CLIENT (`~/.hermes/desktop-plugins/grill-tab/plugin.js`), the Python half on the backend host. README must say so.
+- Remote backends (desktop over SSH): the desktop half must be installed on the client machine (`~/.hermes/desktop-plugins/grill-tab/plugin.js`), the Python half on the backend host.
 
-## Verification gates (Director runs them)
+## Verification gates
 1. `pytest tests/` green; one live smoke against `/interrogate` with intent "hi" → `done=true` in <3 s; intent "write a weekly competitor newsletter for my coffee brand" → question in the goal/deliverable category with a recommendation, <2.5 s.
-2. Prod-shaped test bed: prod renderer code (`~/.hermes/hermes-agent`, untouched) run with `HERMES_HOME=~/.hermes-dev`; plugin loads with no error toast; Tab in slash popover still completes; Tab with a draft opens the ladder; Enter produces a brief preview; Enter launches a session whose first user message is the brief.
-3. Screenshot look-gate with An on that surface before anything is called done.
+2. Prod-shaped test bed: prod renderer code run with an isolated `HERMES_HOME`; plugin loads with no error toast; Tab in slash popover still completes; Tab with a draft opens the ladder; Enter produces a brief preview; Enter launches a session whose first user message is the brief.
+3. Visual UI verification of the rendered component before release.
