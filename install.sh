@@ -2,8 +2,19 @@
 # Install grill-tab from a clone or a curl | bash invocation.
 set -Eeuo pipefail
 
-REPOSITORY="https://github.com/thanhan-a17/grill-tab.git"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+REPOSITORY="${GRILL_TAB_REPOSITORY:-https://github.com/thanhan-a17/grill-tab.git}"
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [[ -z "$PYTHON_BIN" ]]; then
+  for cand in "python3" "python3.12" "$HOME/.hermes/hermes-agent/venv/bin/python" "$HOME/.local/bin/python3.12" "$HOME/.local/bin/python3" "/opt/homebrew/bin/python3.12" "/usr/local/bin/python3.12"; do
+    if command -v "$cand" >/dev/null 2>&1 || [[ -x "$cand" ]]; then
+      if "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
+        PYTHON_BIN="$cand"
+        break
+      fi
+    fi
+  done
+  PYTHON_BIN="${PYTHON_BIN:-python3}"
+fi
 HERMES_BIN="${HERMES_BIN:-hermes}"
 TEMP_SOURCE=""
 
@@ -32,7 +43,10 @@ done
 
 # A downloaded stdin script has no useful BASH_SOURCE path. Prefer a local source
 # only when its manifest is beside this script, otherwise clone a clean temporary copy.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+fi
 if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/plugin.yaml" && -f "$SCRIPT_DIR/scripts/validate_install.py" ]]; then
   SOURCE="$SCRIPT_DIR"
 elif [[ -f "$PWD/plugin.yaml" && -f "$PWD/scripts/validate_install.py" ]]; then
