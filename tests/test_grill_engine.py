@@ -164,6 +164,37 @@ def test_deferral_sets_settled_from_recommendation():
         assert result["settled_from_recommendation"] is True
 
 
+def test_deferred_rung_is_rendered_as_accepted_recommendation():
+    ladder = [
+        {"question": "Memo or table?", "answer": "you decide", "category": "deliverable", "recommended": "A one-page memo"},
+        {"question": "Audience?", "answer": "founders", "category": "goal", "recommended": "designers"},
+        {"question": "Name clients?", "answer": "no", "category": "scope"},
+    ]
+    prompt = engine.build_brief_messages("write it", ladder)[1]["content"]
+    assert "A: A one-page memo (recommendation accepted by the user: 'you decide')" in prompt
+    assert "A: founders" in prompt and "designers" not in prompt.split("A: founders")[1].split("\n")[0]
+    assert "A: no" in prompt
+
+
+def test_memory_is_labelled_as_context_not_decisions(monkeypatch):
+    monkeypatch.setattr(engine, "_memory_context", lambda profile=None: ["USER.md:\nPrefers terse replies."])
+    prompt = engine.build_brief_messages("plan my week", [])[1]["content"]
+    assert "Background about the user (context only, not decisions):\nUSER.md:" in prompt
+
+
+def test_project_context_finds_repo_root_without_subprocess(tmp_path):
+    repo = tmp_path / "my-project"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "package.json").write_text("{}", encoding="utf-8")
+    nested = repo / "src" / "deep"
+    nested.mkdir(parents=True)
+    assert engine._project_context(str(nested)) == "Project hint: my-project; hints: package.json"
+    plain = tmp_path / "loose"
+    plain.mkdir()
+    assert engine._project_context(str(plain)) == "Project hint: loose"
+    assert engine._project_context(str(tmp_path / "missing")) is None
+
+
 def test_brief_strips_thinking_and_appends_missing_directive():
     raw = (
         "<think>Drafting brief...</think>\n"
@@ -200,3 +231,34 @@ def test_template_has_required_headings():
         "## Assumptions to make explicitly (do not ask)", "## Directive",
     ):
         assert heading in brief
+
+
+def test_brief_prompt_carries_fidelity_and_language_contracts():
+    system = engine.build_brief_messages("viết bài", [])[0]["content"].lower()
+    assert "do not enlarge" in system
+    assert "do not add deliverables" in system
+    assert "language the user wrote in" in system
+    assert "unless the intent itself is about code" in system
+    # the parser and the prompt must agree on the section vocabulary
+    for heading in ("## goal", "## settled decisions", "## assumptions to make explicitly (do not ask)", "## directive"):
+        assert heading in system
+
+
+def test_interrogate_prompt_is_domain_neutral():
+    system = engine.build_interrogate_messages("plan my week")[0]["content"].lower()
+    assert "do not assume software" in system
+    assert "architecture only when the intent is clearly code-oriented" in system
+
+
+def test_aux_task_key_prefers_registered_then_legacy_then_default():
+    def cfg(routes):
+        return lambda task: routes.get(task, {})
+
+    assert engine._aux_task_key(cfg({"grill_tab": {"provider": "openrouter", "model": "x"}})) == "grill_tab"
+    assert engine._aux_task_key(cfg({"grill": {"provider": "gemini"}})) == "grill"
+    assert engine._aux_task_key(cfg({"grill_tab": {"model": "y"}, "grill": {"provider": "gemini"}})) == "grill_tab"
+    # defaults-only blocks (provider auto, no model) are not a pin, so a legacy pin still wins
+    assert engine._aux_task_key(cfg({"grill_tab": {"provider": "auto", "timeout": 15}, "grill": {"provider": "gemini", "model": "g"}})) == "grill"
+    assert engine._aux_task_key(cfg({"grill_tab": {"provider": "auto", "timeout": 15}, "grill": {}})) == "grill_tab"
+    assert engine._aux_task_key(cfg({})) == "grill_tab"
+    assert engine._aux_task_key(cfg({"grill": None})) == "grill_tab"

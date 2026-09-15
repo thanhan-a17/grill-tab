@@ -19,7 +19,7 @@ Request
 ```json
 {
   "text": "string, the user's draft intent (required, non-empty)",
-  "ladder": [ { "question": "string", "answer": "string", "category": "string|null" } ],
+  "ladder": [ { "question": "string", "answer": "string", "category": "string|null", "recommended": "string|null" } ],
   "attachments": [ { "name": "string", "kind": "image|file", "data_url": "string|null", "content": "string|null", "path": "string|null" } ],
   "session_history": [ { "role": "user|assistant|system", "content": "string" } ],
   "cwd": "string|null",
@@ -48,13 +48,16 @@ one-line human sentence (e.g. "Intent is a greeting; nothing to settle.").
 `settled_from_recommendation=true` means the previous rung's user answer was a question/deferral and
 the engine adopted its own prior recommendation as that rung's answer; the desktop half rewrites the
 last ladder answer to `previous.recommended` and marks it "(recommended)".
+`recommended` on a ladder rung is optional (added in 0.2.0): when present and the answer is empty or a
+deferral, the engine renders that rung as "<recommended> (recommendation accepted by the user)" so the
+brief treats it as settled rather than open.
 
 ## POST /brief
 Request
 ```json
 {
   "text": "string, required, non-empty",
-  "ladder": [ { "question": "…", "answer": "…", "category": "…" } ],
+  "ladder": [ { "question": "…", "answer": "…", "category": "…", "recommended": "…|null" } ],
   "attachments": [ { "name": "string", "kind": "image|file", "data_url": "string|null", "content": "string|null", "path": "string|null" } ],
   "session_history": [ { "role": "user|assistant|system", "content": "string" } ],
   "cwd": "string|null",

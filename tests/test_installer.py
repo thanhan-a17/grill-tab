@@ -5,12 +5,13 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-PYTHON = Path(os.environ.get("PYTHON_BIN", "/Users/agent/.hermes/hermes-agent/venv/bin/python"))
+PYTHON = Path(os.environ.get("PYTHON_BIN", sys.executable))
 
 
 def make_hermes(directory: Path, version: str) -> Path:
@@ -67,7 +68,28 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue((home / "desktop-plugins/grill-tab/.hermes-package.json").is_file())
             config = (home / "config.yaml").read_text(encoding="utf-8")
             self.assertIn("plugins:\n  enabled:\n    - grill-tab", config)
-            self.assertIn("auxiliary:\n  grill:", config)
+            self.assertIn("auxiliary:\n  grill_tab:\n    provider: auto", config)
+            self.assertNotIn("  grill:\n", config)
+
+    def test_legacy_grill_block_is_carried_over_to_grill_tab(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / "tmp_home"
+            home.mkdir()
+            (home / "config.yaml").write_text(
+                "model:\n  provider: openrouter\n"
+                "auxiliary:\n  vision:\n    provider: auto\n"
+                "  grill:\n    provider: gemini\n    model: gemini-3.8-flash\n    reasoning_effort: minimal\n"
+                "display:\n  compact: false\n",
+                encoding="utf-8",
+            )
+            result = self.run_install(copy_repo(root), home, make_hermes(root, "0.21.2"))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            config = (home / "config.yaml").read_text(encoding="utf-8")
+            self.assertIn("  grill_tab:\n    provider: gemini\n    model: gemini-3.8-flash\n    reasoning_effort: minimal\n", config)
+            # the user's original block is theirs; we never delete config we did not write
+            self.assertIn("  grill:\n    provider: gemini\n", config)
+            self.assertIn("display:\n  compact: false", config)
 
     def test_second_install_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -81,7 +103,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
             config = (home / "config.yaml").read_text(encoding="utf-8")
             self.assertEqual(config.count("- grill-tab"), 1)
-            self.assertEqual(config.count("  grill:\n"), 1)
+            self.assertEqual(config.count("  grill_tab:\n"), 1)
             self.assertTrue((home / "desktop-plugins/grill-tab/.hermes-package.json").is_file())
 
 

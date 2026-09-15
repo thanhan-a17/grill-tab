@@ -3,11 +3,19 @@ from __future__ import annotations
 
 import datetime as _datetime
 import json
+import logging
 import re
-import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
+
+logger = logging.getLogger(__name__)
+
+# Auxiliary task registered by __init__.register(); `auxiliary.grill` is the pre-0.2 key and is
+# still honoured (read-only) so existing installs keep their model pin.
+_AUX_TASK = "grill_tab"
+_LEGACY_AUX_TASK = "grill"
+_legacy_aux_notice_logged = False
 
 _INTERROGATE_TIMEOUT = 25.0
 _BRIEF_TIMEOUT = 35.0
@@ -19,23 +27,34 @@ _DEFERRAL_RE = re.compile(
     re.IGNORECASE,
 )
 
-_INTERROGATE_SYSTEM = """You are the Grill preflight engine for an autonomous agent run.
-Model the user's intent as a design tree. Ask exactly one decision from the current frontier: only a decision whose prerequisites are already known.
+_INTERROGATE_SYSTEM = """You are the Grill preflight engine: before an autonomous agent starts on the user's draft, you surface the one decision most likely to change the outcome.
+The draft may be anything — research, writing, planning, operations, design, analysis, personal errands, or code. Do not assume software.
+Model the intent as a decision tree. Ask exactly one decision from the current frontier: only a decision whose prerequisites are already known.
 Every question must include a short recommended answer and, where natural, 2–4 short options.
 Facts are the agent's job: do not ask for facts that can be inspected or looked up. Ask decisions only.
 Skip-if-same-plan rule: if every plausible answer leads to the same work, do not ask.
 If the prior answer is a question, hesitation, "you decide", or asks which is simplest, treat the prior recommendation as settled. Do not re-ask or rephrase it; set settled_from_recommendation true.
 Trivial greetings, thanks, and tiny underspecified intents must return done=true immediately with a one-line reason; do not manufacture questions.
-Prefer the highest-leverage unanswered category: goal, deliverable, scope, verification. Use architecture only for clearly code-oriented intents. Do not repeat a category unless the user opened a new branch.
+Prefer the highest-leverage unanswered category: goal (the outcome that makes this worth doing), deliverable (shape, medium, audience, where it lands), scope (what is in and out), verification (how the user will know it is right). Use architecture only when the intent is clearly code-oriented. Do not repeat a category unless the user opened a new branch.
 Analyze attached media/files using their supplied descriptions or previews, and build directly on prior conversation context instead of re-asking settled information.
-Never ask generic vanilla questions about language, tests, or error handling. Questions must be 18 words or fewer.
+Never ask generic checklist questions (tone, length, language, tests, error handling) unless the answer would change the plan. Questions must be 18 words or fewer, in the user's language.
 Return JSON only, with exactly: done (boolean), reason (string or null), question (string or null), recommended (string or null), options (array), category (goal|deliverable|scope|verification|architecture|null), settled_from_recommendation (boolean)."""
 
-_BRIEF_SYSTEM = """Write a concise execution brief from the original intent and settled ladder. Return markdown only, at most 250 words.
-Use these sections exactly when they have content: ## Goal, ## Success criteria, ## Deliverable, ## Scope & non-goals, ## Settled decisions, ## Constraints, ## Verify before reporting done, ## Assumptions to make explicitly (do not ask), ## Directive.
-Goal must be an outcome, not an activity. Success criteria must be observable. Settled decisions are directives, not Q/A.
-Analyze attached media/files using their supplied descriptions or previews, and treat prior conversation context as established context for the brief.
-Never invent facts not settled by the ladder; put necessary unresolved choices under Assumptions.
+_BRIEF_SYSTEM = """Turn the original intent and the completed ladder into an execution brief for an autonomous agent. Return markdown only.
+Fidelity comes first. The brief is a faithful restatement of what the user asked for and decided, not an improved version of it:
+- Goal restates the user's original intent as an outcome, in the user's own terms and at the user's stated ambition. Do not enlarge it.
+- Settled means: stated in the original intent, answered in the ladder, or a recommendation the user accepted (including by deferring with "you decide" or similar). Nothing else is settled.
+- Do not add deliverables, steps, audiences, channels, features, or polish the user did not ask for. Do not change the medium, tone, length, or language of what they asked for.
+- Every line under Settled decisions must trace to a settled item. Write it as a directive, not as question and answer.
+- Anything the work still needs that is not settled goes under Assumptions, phrased conservatively: pick the least surprising, smallest option, never the most ambitious one.
+- Never invent facts, numbers, names, or constraints that were not given.
+- Background about the user (memory, project notes, prior conversation) is context, not a decision. Use it only to phrase things in the user's terms. Never promote it into Goal, Settled decisions, or Constraints, and never use it to guess a target (repository, folder, file, account, brand) the user did not name — an unnamed target is an Assumption: the current working directory, or the item the user pointed at.
+Use these sections, with these exact headings, only when they have content: ## Goal, ## Success criteria, ## Deliverable, ## Scope & non-goals, ## Settled decisions, ## Constraints, ## Verify before reporting done, ## Assumptions to make explicitly (do not ask), ## Directive.
+Constraints holds only limits the user stated. Success criteria must be observable by the user. Verify steps must be things the agent can actually check before reporting.
+Use plain, domain-appropriate language; do not use software vocabulary (architecture, tests, deploy, implementation) unless the intent itself is about code.
+Write the body in the language the user wrote in; the headings stay in English.
+Be concise — most briefs fit in 150–250 words — but never drop a settled decision to save space.
+Analyze attached media/files using their supplied descriptions or previews, and treat prior conversation context as established context.
 The Directive must say: Work autonomously. Do not re-ask anything above. Ask only if blocked by something outside this brief."""
 
 
@@ -245,22 +264,10 @@ def _project_context(cwd: Any) -> str | None:
     path = Path(cwd).expanduser()
     if not path.exists():
         return None
-    root = path
-    try:
-        resolved = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=1.0, check=False,
-        ).stdout.strip()
-        if resolved:
-            root = Path(resolved)
-    except (OSError, subprocess.SubprocessError):
-        pass
-    hints: list[str] = []
-    for filename in ("pyproject.toml", "package.json", "README.md"):
-        candidate = root / filename
-        if candidate.is_file():
-            hints.append(filename)
-    suffix = f"; hints: {', '.join(hints[:3])}" if hints else ""
+    # Repository root = nearest ancestor holding .git (a plain filesystem walk; no subprocess).
+    root = next((p for p in (path, *path.parents) if (p / ".git").exists()), path)
+    hints = [name for name in ("pyproject.toml", "package.json", "README.md") if (root / name).is_file()]
+    suffix = f"; hints: {', '.join(hints)}" if hints else ""
     return f"Project hint: {root.name or root}{suffix}"
 
 
@@ -274,9 +281,20 @@ def _rungs(ladder: Any) -> list[dict[str, str]]:
         question = _clean_text(rung.get("question"))
         answer = _clean_text(rung.get("answer"))
         category = _clean_text(rung.get("category"))
+        recommended = _clean_text(rung.get("recommended"))
         if question or answer:
-            result.append({"question": question, "answer": answer, "category": category})
+            result.append({"question": question, "answer": answer, "category": category, "recommended": recommended})
     return result
+
+
+def _render_answer(rung: Mapping[str, str]) -> str:
+    """A deferral ("you decide") is the user accepting the recommendation; say so explicitly
+    when we know it, so the brief model never has to guess what was accepted."""
+    answer = rung.get("answer", "")
+    recommended = rung.get("recommended", "")
+    if recommended and (not answer or _DEFERRAL_RE.search(answer)):
+        return f"{recommended} (recommendation accepted by the user{': ' + repr(answer) if answer else ''})"
+    return answer
 
 
 def _is_deferral(rungs: Iterable[Mapping[str, str]]) -> bool:
@@ -343,7 +361,9 @@ def _context_message(
     project = _project_context(cwd)
     if project:
         parts.append(project)
-    parts.extend(_memory_context(profile))
+    memories = _memory_context(profile)
+    if memories:
+        parts.append("Background about the user (context only, not decisions):\n" + "\n\n".join(memories))
     history = _render_session_history(session_history)
     if history:
         parts.append(f"Prior conversation context:\n{history}")
@@ -353,7 +373,7 @@ def _context_message(
     parts.append(f"Original intent:\n{text.strip()}")
     rungs = _rungs(ladder)
     if rungs:
-        rendered = "\n".join(f"- [{r['category'] or 'unknown'}] Q: {r['question']}\n  A: {r['answer']}" for r in rungs)
+        rendered = "\n".join(f"- [{r['category'] or 'unknown'}] Q: {r['question']}\n  A: {_render_answer(r)}" for r in rungs)
         parts.append(f"Completed ladder:\n{rendered}")
     if _is_deferral(rungs):
         parts.append("The last answer is a deferral. Adopt the prior recommendation as settled and set settled_from_recommendation=true.")
@@ -390,6 +410,32 @@ def build_brief_messages(
     ]
 
 
+def _has_route(task_config: Any) -> bool:
+    """True when the block pins a model. ``provider: auto`` is the registered default (and
+    the installer's default), not a pin."""
+    if not isinstance(task_config, Mapping):
+        return False
+    provider = _clean_text(task_config.get("provider")).lower()
+    return bool(_clean_text(task_config.get("model")) or (provider and provider != "auto"))
+
+
+def _aux_task_key(get_config: Callable[[str], Mapping[str, Any]] | None = None) -> str:
+    """Return the auxiliary task to route through: ``grill_tab`` unless only the legacy
+    ``grill`` block carries a provider/model pin."""
+    global _legacy_aux_notice_logged
+    if get_config is None:
+        from agent.auxiliary_client import _get_auxiliary_task_config as get_config
+
+    if _has_route(get_config(_AUX_TASK)):
+        return _AUX_TASK
+    if _has_route(get_config(_LEGACY_AUX_TASK)):
+        if not _legacy_aux_notice_logged:
+            logger.info("auxiliary.%s is deprecated; move the block to auxiliary.%s", _LEGACY_AUX_TASK, _AUX_TASK)
+            _legacy_aux_notice_logged = True
+        return _LEGACY_AUX_TASK
+    return _AUX_TASK
+
+
 def _default_llm(
     *,
     messages: list[dict[str, str]],
@@ -408,8 +454,9 @@ def _default_llm(
     from hermes_constants import parse_reasoning_effort
 
     route: dict[str, str] = {}
-    task_config = _get_auxiliary_task_config("grill")
-    provider, model, _, _, _ = _resolve_task_provider_model("grill")
+    task = _aux_task_key()
+    task_config = _get_auxiliary_task_config(task)
+    provider, model, _, _, _ = _resolve_task_provider_model(task)
     provider_norm = (provider or "").strip().lower()
 
     effort = task_config.get("reasoning_effort")
@@ -438,7 +485,7 @@ def _default_llm(
         timeout = max(timeout, float(cfg_timeout))
 
     response = call_llm(
-        task="grill",
+        task=task,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -456,7 +503,7 @@ def get_model_label() -> str:
     """Best-effort configured auxiliary route for health/fallback responses."""
     try:
         from agent.auxiliary_client import _resolve_task_provider_model
-        provider, model, _, _, _ = _resolve_task_provider_model("grill")
+        provider, model, _, _, _ = _resolve_task_provider_model(_aux_task_key())
         return f"{provider or 'auto'}/{model or 'default'}"
     except Exception:
         return "auto/default"

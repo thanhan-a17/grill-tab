@@ -219,7 +219,7 @@ let requestSerial = 0
 let pluginContext = null
 
 // This is the only module that selects or imperatively writes app-owned DOM.
-// Selector provenance is documented in desktop/README-DEV.md.
+// Selector provenance is documented in docs/DESKTOP-DEV.md.
 const composerAdapter = {
   tabListener: null,
 
@@ -350,7 +350,9 @@ function update(action) {
 }
 
 function contractLadder(ladder) {
-  return ladder.map(({ answer, category, question }) => ({ answer, category, question }))
+  // `recommended` rides along so a deferral answer ("you decide") can be resolved server-side
+  // to the concrete recommendation instead of leaving the brief model to guess it.
+  return ladder.map(({ answer, category, question, recommended }) => ({ answer, category, question, recommended }))
 }
 
 async function askNext() {
