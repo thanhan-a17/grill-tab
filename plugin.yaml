@@ -1,9 +1,11 @@
 name: grill-tab
-version: 0.1.0
+version: 0.2.0
 description: Interrogate a draft intent and synthesize an execution brief.
 manifest_version: 1
 requires_hermes: ">=0.20.0"
-author: "Hermes Community"
+author: thanhan-a17
+license: MIT
+homepage: https://github.com/thanhan-a17/grill-tab
 capabilities: []
 kind: standalone
 requires_env: []

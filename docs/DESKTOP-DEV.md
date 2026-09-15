@@ -26,8 +26,8 @@ The `composerAdapter` object in `plugin.js` is the only plugin code permitted to
 3. Check the exact visual contract: one 12 px left/right inset; 20 px rung number column; 8 px vertical rhythm; no hard colors/backgrounds; rung questions single-line; answers right-aligned/truncated; answer hairline becomes accent on focus.
 4. Type `/` and open slash completion; Tab must select/continue the completion and never open Grill Tab. Repeat with `@` and emoji completion.
 5. With an empty composer, Tab must retain normal focus behavior. With a non-empty ordinary draft, bare Tab must open the ladder.
-6. In an active question: empty Tab accepts the recommendation and asks next; Enter previews a brief; Esc dismisses then a second Esc restores the original intent; empty Backspace reopens the prior rung; clicking a rung discards later rungs and reopens it.
-7. In done: copy reads `Nothing critical left.`; Enter writes preview and Tab forces another question (`force: true`).
-8. In preview: brief is plain scrollable text (not `<pre>`); Copy copies it; Esc returns to ladder; Enter places the brief in the composer.
-9. Disable `/brief` or return an error: preview should use the local template; the brief is never auto-sent.
+6. In an active question: empty Tab accepts the recommendation and asks next; Enter writes the brief straight into the composer and closes the strip; Esc dismisses then a second Esc restores the original intent; empty Backspace reopens the prior rung; clicking a settled rung edits it inline without discarding later rungs.
+7. In done: copy reads `Nothing critical left.`; Enter writes the brief and Tab forces another question (`force: true`).
+8. After Enter the composer holds the brief with the caret at the end and any staged attachments forwarded; the user sends it themselves.
+9. Disable `/brief` or return an error: the local template is placed instead; the brief is never auto-sent.
 10. While the brief request is pending, press Enter in the composer: middleware must cancel the send.

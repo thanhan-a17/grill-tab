@@ -1,1 +1,1 @@
-{"name":"grill-tab","label":"Grill Tab","description":"Interrogate draft intents and synthesize execution briefs.","version":"0.1.0","api":"plugin_api.py"}
+{"name":"grill-tab","label":"Grill Tab","description":"Interrogate draft intents and synthesize execution briefs.","version":"0.2.0","api":"plugin_api.py"}

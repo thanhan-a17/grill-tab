@@ -1,86 +1,107 @@
-# grill-tab — press Tab to grill your draft before it becomes a session
+# grill-tab
 
-A standalone Hermes plugin (no core patches). In Hermes Desktop, type a rough intent and press
-**Tab**: a fast model asks the single most useful *decision* (never a fact it could look up), with
-a recommended answer and short options. Answer, Tab again, or just Tab to accept the
-recommendation. Press **Enter** when you're done: the ladder is synthesized into an execution
-brief (Goal · Success criteria · Deliverable · Scope & non-goals · Settled decisions · Constraints ·
-Verify · Assumptions · Directive) and **placed in the composer for your review** — you press Enter
-yourself to start the session.
+**Press Tab before you press Enter.** A Hermes Desktop plugin that turns a rough draft into a
+brief the agent can run with — by asking you the few decisions that actually matter, one at a time.
 
-Designed for general agentic work (research, content, ops, code), not just dev.
+Type an intent in the composer and press **Tab**. A fast auxiliary model asks the single most useful
+*decision* (never a fact it could look up), with a recommended answer and a couple of short options.
+Answer and Tab again, or just Tab to accept the recommendation. Press **Enter** when you're done:
+the settled ladder is synthesized into an execution brief and **placed in the composer for your
+review** — you press Enter yourself to start the session. Nothing is ever sent on your behalf.
 
-<p align="center">
-  <video src="https://github.com/thanhan-a17/grill-tab/raw/main/assets/Hermes4k.mp4" poster="assets/poster.png" controls="controls" width="100%"></video>
-</p>
+It works for any kind of work — research, writing, planning, operations, design, data, code. The
+brief is a faithful restatement of what *you* asked for and decided, not an improved version of it:
+it never widens scope, never adds deliverables, and writes in the language you wrote in.
 
 ## Install
 
 ```bash
-# One command (downloads a temporary clone, validates it, installs it, then cleans up)
-curl -fsSL https://raw.githubusercontent.com/thanhan-a17/grill-tab/main/install.sh | bash
-
-# Local clone
-./install.sh
-./install.sh --profile <name>
-./install.sh --home /path/to/hermes-home
+hermes plugins install thanhan-a17/grill-tab --enable
 ```
 
-The installer requires Python 3.12+ and Hermes 0.20.0+. Its **pre-flight** validates the plugin
-manifest and host Hermes version before creating or changing the target Hermes home. On failure it
-exits with code 1 and prints an `[ERROR]` explanation. After a successful pre-flight it copies the
-backend package to `plugins/grill-tab`, installs `desktop-plugins/grill-tab/plugin.js` plus its
-`.hermes-package.json`, enables `grill-tab` in `config.yaml`, and adds a default `auxiliary.grill`
-block when missing. It is safe to run again for upgrades.
+Then restart the Desktop backend (quit and reopen Hermes Desktop). The desktop half is picked up
+automatically from the installed package; check **Capabilities → Plugins** shows *Grill Tab* on.
 
-`HERMES_HOME` selects the default target; `--home` overrides it and `--profile name` targets
-`$HERMES_HOME/profiles/name`. Set `PYTHON_BIN` or `HERMES_BIN` when the compatible executables are
-not on `PATH`. The legacy `scripts/install.sh` delegates to the root installer.
+Requires Hermes 0.20.0+ and Hermes Desktop on a local backend. For a **remote backend** (Desktop
+over SSH / URL): install on the backend host as above, then copy `desktop/plugin.js` to
+`~/.hermes/desktop-plugins/grill-tab/plugin.js` on the machine running the app.
 
-Then restart the desktop backend (quit/reopen Hermes Desktop) and, in Capabilities → Plugins,
-make sure **Grill Tab** is on. Recommended model (fast, good questions):
+<details>
+<summary>Alternative: <code>install.sh</code> (profiles, custom homes, no <code>hermes</code> on PATH)</summary>
 
-```yaml
-auxiliary:
-  grill:
-    provider: openrouter
-    model: openai/gpt-5-mini
-    reasoning_effort: minimal
-    timeout: 15
+```bash
+git clone https://github.com/thanhan-a17/grill-tab.git && cd grill-tab
+./install.sh                      # default HERMES_HOME
+./install.sh --profile <name>     # $HERMES_HOME/profiles/<name>
+./install.sh --home /path/to/home
 ```
 
-Remote backend (SSH / URL): run `install.sh` on the **backend** host; copy `desktop/plugin.js` to
-`~/.hermes/desktop-plugins/grill-tab/plugin.js` on the machine that runs the app.
+The installer validates the manifest and host version *before* touching the target home, copies the
+package into `plugins/grill-tab` and `desktop-plugins/grill-tab`, enables the plugin, and adds a
+default `auxiliary.grill_tab` block (carrying over a pre-0.2 `auxiliary.grill` block if present).
+Safe to re-run for upgrades. `PYTHON_BIN` / `HERMES_BIN` override executable discovery.
+</details>
+
+## Choose the model
+
+Grill Tab registers its own auxiliary task, `grill_tab`, so you pick its model like any other
+side-model — a fast, cheap one is the point (a rung should take 1–3 s):
+
+- **CLI:** `hermes model` → *Configure auxiliary models* → **Grill Tab**
+- **Desktop:** Settings → Models → Auxiliary (on Hermes builds that list plugin tasks)
+- **config.yaml:**
+
+  ```yaml
+  auxiliary:
+    grill_tab:
+      provider: openrouter
+      model: openai/gpt-5-mini
+      reasoning_effort: minimal
+      timeout: 15
+  ```
+
+Left unset, the task follows your main model. Reasoning models work too — token headroom is sized
+for them — they are just slower per rung.
 
 ## Keys
 
 | State | Tab | Enter | Esc | Backspace (empty) |
 |---|---|---|---|---|
 | Composer with text | start grilling | send as usual | — | — |
-| Question | commit answer (empty = accept recommendation) | write brief | dismiss question / 2nd Esc exits & restores draft | reopen previous rung |
-| Nothing critical left | one more question | write brief | exit | — |
-| Brief preview | — | place brief in composer | back | — |
+| Question | commit answer (empty = accept recommendation) | write brief → composer | dismiss question · 2nd Esc exits & restores draft | reopen previous rung |
+| Nothing critical left | one more question | write brief → composer | exit | — |
 
-Palette: **Grill this draft** · Keybind: ⌘⇧G.
+Click a settled rung to edit it in place (Enter/blur saves, Esc cancels) without losing later rungs.
+Palette: **Grill this draft** · Keybind: ⌘⇧G. Tab inside slash / `@` completions and on an empty
+composer is never intercepted.
 
 ## Layout
 
 ```
-plugin.yaml, __init__.py        agent-half marker
-dashboard/manifest.json         { "api": "plugin_api.py" }  → /api/plugins/grill-tab/{interrogate,brief,health}
-dashboard/grill_engine.py       prompts, parsing, fallbacks (pure; tested)
+plugin.yaml, __init__.py        agent half; registers the grill_tab auxiliary task
+dashboard/manifest.json         { "api": "plugin_api.py" } → /api/plugins/grill-tab/{interrogate,brief,health}
+dashboard/grill_engine.py       prompts, context assembly, parsing, fallbacks (pure; tested)
 desktop/plugin.js               single-file desktop plugin (ESM, @hermes/plugin-sdk)
-docs/SPEC.md, docs/CONTRACT.md  behaviour + frozen REST contract
-scripts/install.sh              installer;  scripts/smoke.sh  live smoke;  scripts/cdp_*.py  renderer verification
-tests/                          pytest (engine + API) and node --test (desktop core)
+docs/                           SPEC.md · CONTRACT.md (frozen REST contract) · DESKTOP-DEV.md (DOM adapter)
+install.sh, scripts/            alternative installer + its pre-flight validator
+tests/                          pytest (engine, API, installer) · node --test (desktop core)
 ```
 
 ## Develop
 
 ```bash
-PYTHONPATH=~/.hermes/hermes-agent ~/.hermes/hermes-agent/venv/bin/python -m pytest tests -q
+# Python tests need a Hermes checkout on PYTHONPATH (any venv with pytest)
+PYTHONPATH=/path/to/hermes-agent python -m pytest tests -q
 node scripts/extract-core.mjs && node --test tests/desktop/
+
+# Catalog-style gates
+HERMES_HOME=$(mktemp -d) hermes plugins validate .
+HERMES_HOME=$(mktemp -d) hermes plugins doctor --ci .
 ```
 
-The desktop watcher hot-reloads a real file, not a symlink — re-run `install.sh` (or copy
-`desktop/plugin.js`) after edits.
+Backend edits hot-reload inside `hermes serve`; desktop edits need the file re-copied (the watcher
+follows a real file, not a symlink) — re-run the install or copy `desktop/plugin.js`.
+
+## License
+
+MIT © 2026 thanhan-a17
